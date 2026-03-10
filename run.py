@@ -141,13 +141,14 @@ def process_sku(
     sku_id    = sku_entry["sku_id"]
     container = sku_entry["container"]
     reprocess = sku_entry["reprocess"]
+    category  = sku_entry.get("category")
     sku_log   = logging.getLogger(f"sku.{sku_id}")
 
     # ── Skip if already done (and not forced reprocess) ──────
     existing = db.get_sku_status(sku_id)
     if existing and existing["status"] == "done" and not reprocess:
         sku_log.info(f"SKIP {sku_id}  (already done — add reprocess=true in CSV to override)")
-        db.mark_skipped(run_id, sku_id)
+        db.mark_skipped(run_id, sku_id, category=category)
         return "skipped"
 
     # ── Resolve source container ──────────────────────────────
@@ -169,16 +170,18 @@ def process_sku(
             run_id, sku_id, "failed", container_name, container_source,
             reprocess, 0, 0, 0, 0, [], [],
             error_code=type(exc).__name__, error_msg=str(exc),
+            category=category,
         )
         return "failed"
 
     if not blobs:
-        sku_log.warning(f"No blobs found — prefix: lifestyle/{sku_id}")
+        sku_log.warning(f"No blobs found — container={container_name}  prefix=lifestyle/{sku_id}")
         db.upsert_sku_result(
             run_id, sku_id, "failed", container_name, container_source,
             reprocess, 0, 0, 0, 0, [], [],
             error_code="NO_BLOBS",
             error_msg=f"No blobs found in {container_name} for prefix lifestyle/{sku_id}",
+            category=category,
         )
         return "failed"
 
@@ -269,6 +272,7 @@ def process_sku(
         container_name, container_source, reprocess,
         len(blobs), cloudinary_sent, cloudinary_skipped, azure_uploaded,
         cloudinary_urls, azure_urls,
+        category=category,
     )
     sku_log.info(
         f"=== DONE  {sku_id}  "
@@ -313,6 +317,7 @@ def worker_loop(
             "sku_id":    task["sku_id"],
             "container": task["container"],
             "reprocess": bool(task["reprocess"]),
+            "category":  task.get("category"),
         }
 
         status = "failed"

@@ -425,6 +425,102 @@ def api_run_skus(run_id: str):
     return jsonify(rows)
 
 
+# ── SKU List (paginated business view) ───────────────────────
+
+@app.route("/skus")
+def sku_list():
+    category = request.args.get("category", "").strip().lower()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+    status   = request.args.get("status", "done")
+    q        = request.args.get("q", "").strip()
+    per_page = 24
+    offset   = (page - 1) * per_page
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        if not category:
+            # ── Level 1: Category grid ────────────────────────
+            # COALESCE groups NULL rows under "uncategorized" for backward compat
+            cur.execute("""
+                SELECT
+                    COALESCE(NULLIF(category,''), 'uncategorized') AS category,
+                    COUNT(*)                           AS total,
+                    SUM(status = 'done')               AS done,
+                    SUM(status = 'failed')             AS failed,
+                    SUM(status = 'skipped')            AS skipped,
+                    SUM(azure_uploaded)                AS total_images,
+                    JSON_UNQUOTE(JSON_EXTRACT(
+                        MAX(CASE WHEN status='done' THEN azure_urls END),
+                        '$[0]'
+                    ))                                 AS sample_azure_url
+                FROM  sku_results
+                GROUP BY COALESCE(NULLIF(category,''), 'uncategorized')
+                ORDER BY category
+            """)
+            categories = cur.fetchall()
+            for cat in categories:
+                raw = cat.get("sample_azure_url") or ""
+                cat["thumb_url"] = make_cf_url(raw) or make_sas_url(raw)
+            return render_template("skus.html", categories=categories, category=None)
+
+        # ── Level 2: SKU list for selected category ───────────
+        # "uncategorized" matches rows where category IS NULL or empty
+        if category == "uncategorized":
+            where_parts = ["(category IS NULL OR category = '')"]
+            params      = []
+        else:
+            where_parts = ["category = %s"]
+            params      = [category]
+
+        if status != "all":
+            where_parts.append("status = %s")
+            params.append(status)
+        if q:
+            where_parts.append("sku_id LIKE %s")
+            params.append(f"%{q}%")
+        where = "WHERE " + " AND ".join(where_parts)
+
+        cur.execute(f"SELECT COUNT(*) AS total FROM sku_results {where}", params)
+        total = (cur.fetchone() or {}).get("total", 0)
+
+        cur.execute(f"""
+            SELECT sku_id, status, blob_count, azure_uploaded, last_processed_at,
+                   JSON_UNQUOTE(JSON_EXTRACT(azure_urls, '$[0]')) AS first_azure_url
+            FROM   sku_results
+            {where}
+            ORDER  BY last_processed_at DESC
+            LIMIT  %s OFFSET %s
+        """, params + [per_page, offset])
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+
+    skus = []
+    for row in rows:
+        raw = row.get("first_azure_url") or ""
+        skus.append({**row, "thumb_url": make_cf_url(raw) or make_sas_url(raw)})
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+
+    return render_template(
+        "skus.html",
+        categories  = None,
+        category    = category,
+        skus        = skus,
+        page        = page,
+        total_pages = total_pages,
+        total       = total,
+        per_page    = per_page,
+        status      = status,
+        q           = q,
+    )
+
+
 # ── Legacy redirect ───────────────────────────────────────────
 
 @app.route("/sku/<path:sku_id>")

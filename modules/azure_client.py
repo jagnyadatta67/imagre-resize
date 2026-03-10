@@ -65,7 +65,7 @@ class AzureClient:
     def list_sku_blobs(self, container_name: str, sku_id: str) -> list[str]:
         """
         Return blob names that start with  lifestyle/{sku_id}
-        (e.g. lifestyle/1000015209364-Pink-Pink-..._01-2100.jpg).
+        (e.g. lifestyle/1100004294-Multicolour_01.jpg).
         Raises on auth / network errors so the caller can log them.
         """
         prefix = f"{SOURCE_BLOB_PREFIX}{sku_id}"

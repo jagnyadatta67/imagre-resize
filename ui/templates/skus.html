@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}{% if category %}{{ category | title }} SKUs{% else %}Categories{% endif %}{% endblock %}
+
+{% block content %}
+
+{% if not category %}
+<!-- ══════════════════════════════════════════════════════════
+     LEVEL 1 — Category grid
+══════════════════════════════════════════════════════════ -->
+
+<div style="margin-bottom:28px;">
+  <h1 style="font-size:1.3rem; font-weight:700; color:#1e293b; margin:0;">Categories</h1>
+  <p style="font-size:.82rem; color:#94a3b8; margin:4px 0 0;">{{ categories | length }} categories found</p>
+</div>
+
+{% if categories %}
+<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:20px;">
+  {% for cat in categories %}
+  <a href="/skus?category={{ cat.category }}" style="text-decoration:none;">
+    <div class="img-card" style="cursor:pointer; transition:box-shadow .15s; overflow:hidden;">
+
+      <!-- Category thumbnail -->
+      <div style="width:100%; aspect-ratio:3/4; background:#f1f5f9; overflow:hidden; position:relative;">
+        {% if cat.thumb_url %}
+        <img src="{{ cat.thumb_url }}" alt="{{ cat.category }}" loading="lazy"
+             style="width:100%; height:100%; object-fit:cover;"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; font-size:3rem;">🏷️</div>
+        {% else %}
+        <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:3rem; color:#cbd5e1;">🏷️</div>
+        {% endif %}
+
+        <!-- Category name overlay -->
+        <div style="position:absolute; bottom:0; left:0; right:0; background:linear-gradient(transparent, rgba(0,0,0,.7)); padding:24px 14px 12px;">
+          <p style="color:#fff; font-size:1.1rem; font-weight:700; margin:0; text-transform:capitalize; letter-spacing:.02em;">
+            {{ cat.category }}
+          </p>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div style="padding:12px 14px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:.82rem; font-weight:600; color:#1e293b;">{{ cat.total }} SKUs</span>
+          <span style="font-size:.75rem; color:#64748b;">{{ cat.total_images or 0 }} images</span>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          {% if cat.done %}
+          <span class="badge badge-done" style="font-size:.65rem;">✅ {{ cat.done }} done</span>
+          {% endif %}
+          {% if cat.failed %}
+          <span class="badge badge-failed" style="font-size:.65rem;">❌ {{ cat.failed }} failed</span>
+          {% endif %}
+          {% if cat.skipped %}
+          <span class="badge badge-skipped" style="font-size:.65rem;">⏭️ {{ cat.skipped }} skipped</span>
+          {% endif %}
+        </div>
+      </div>
+
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+{% else %}
+<div style="text-align:center; padding:80px 20px; color:#94a3b8;">
+  <div style="font-size:3rem; margin-bottom:12px;">📭</div>
+  <p style="font-size:1rem; font-weight:600; color:#64748b;">No categories yet</p>
+  <p style="font-size:.82rem; margin-top:6px;">Run the pipeline with named CSV files (e.g. men.csv, women.csv)</p>
+</div>
+{% endif %}
+
+
+{% else %}
+<!-- ══════════════════════════════════════════════════════════
+     LEVEL 2 — SKU list for selected category
+══════════════════════════════════════════════════════════ -->
+
+<!-- Header -->
+<div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px;">
+  <div style="display:flex; align-items:center; gap:12px;">
+    <a href="/skus" style="color:#94a3b8; text-decoration:none; font-size:.85rem; font-weight:500;
+       padding:6px 12px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; transition:all .15s;"
+       onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='#fff'">
+      ← Categories
+    </a>
+    <div>
+      <h1 style="font-size:1.3rem; font-weight:700; color:#1e293b; margin:0; text-transform:capitalize;">
+        {{ category }}
+      </h1>
+      <p style="font-size:.82rem; color:#94a3b8; margin:4px 0 0;">
+        {{ ((page-1)*per_page)+1 }}–{{ [page*per_page, total]|min }} of
+        <strong>{{ total }}</strong>
+        {% if status != 'all' %}{{ status }}{% endif %} SKUs
+      </p>
+    </div>
+  </div>
+
+  <!-- Search + Filter -->
+  <form method="get" action="/skus" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <input type="hidden" name="category" value="{{ category }}">
+
+    <!-- Status filter pills -->
+    <div style="display:flex; background:#f1f5f9; border-radius:10px; padding:3px; gap:2px;">
+      {% for s, label in [('done','✅ Done'), ('failed','❌ Failed'), ('all','All')] %}
+      <button type="submit" name="status" value="{{ s }}"
+        style="border:none; cursor:pointer; border-radius:8px; padding:5px 14px; font-size:.78rem; font-weight:600; transition:all .15s;
+               {% if status == s %}background:#fff; color:#4f46e5; box-shadow:0 1px 4px rgba(0,0,0,.1);{% else %}background:transparent; color:#64748b;{% endif %}">
+        {{ label }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <!-- Search -->
+    <input type="hidden" name="status" value="{{ status }}">
+    <div style="display:flex; align-items:center; background:#fff; border:1px solid #e2e8f0; border-radius:9px; padding:0 12px; gap:6px;">
+      <span style="color:#94a3b8; font-size:.9rem;">🔍</span>
+      <input type="text" name="q" value="{{ q }}" placeholder="Search SKU ID…"
+             style="border:none; outline:none; font-size:.82rem; color:#1e293b; width:180px; padding:7px 0; background:transparent;">
+      {% if q %}
+      <a href="/skus?category={{ category }}&status={{ status }}" style="color:#94a3b8; font-size:.8rem; text-decoration:none;">✕</a>
+      {% endif %}
+    </div>
+    <button type="submit" class="btn-primary">Search</button>
+  </form>
+</div>
+
+
+<!-- SKU card grid -->
+{% if skus %}
+<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:16px;">
+  {% for sku in skus %}
+  <a href="/?bq={{ sku.sku_id }}" style="text-decoration:none;" title="View {{ sku.sku_id }}">
+    <div class="img-card" style="cursor:pointer;">
+
+      <!-- Thumbnail -->
+      <div style="width:100%; aspect-ratio:3/4; background:#f1f5f9; overflow:hidden; position:relative;">
+        {% if sku.thumb_url %}
+        <img src="{{ sku.thumb_url }}" alt="{{ sku.sku_id }}" loading="lazy"
+             style="width:100%; height:100%; object-fit:cover;"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; color:#cbd5e1; font-size:2rem;">🖼️</div>
+        {% else %}
+        <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:2rem;">🖼️</div>
+        {% endif %}
+      </div>
+
+      <!-- Info -->
+      <div style="padding:10px 12px 12px;">
+        <p class="mono" style="font-size:.72rem; font-weight:700; color:#1e293b; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ sku.sku_id }}
+        </p>
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-top:5px;">
+          <span style="font-size:.7rem; color:#64748b;">🖼 {{ sku.azure_uploaded or sku.blob_count or 0 }} images</span>
+          <span class="badge {% if sku.status == 'done' %}badge-done{% elif sku.status == 'failed' %}badge-failed{% else %}badge-skipped{% endif %}"
+                style="font-size:.6rem; padding:1px 7px;">{{ sku.status }}</span>
+        </div>
+        <p style="font-size:.67rem; color:#94a3b8; margin:5px 0 0;">
+          {{ sku.last_processed_at | fmt_dt if sku.last_processed_at else '—' }}
+        </p>
+      </div>
+
+    </div>
+  </a>
+  {% endfor %}
+</div>
+
+{% else %}
+<div style="text-align:center; padding:80px 20px; color:#94a3b8;">
+  <div style="font-size:3rem; margin-bottom:12px;">📭</div>
+  <p style="font-size:1rem; font-weight:600; color:#64748b;">No SKUs found</p>
+  <p style="font-size:.82rem; margin-top:6px;">
+    {% if q %}No results for "<strong>{{ q }}</strong>"{% else %}No {{ status }} SKUs in {{ category }}{% endif %}
+  </p>
+</div>
+{% endif %}
+
+
+<!-- Pagination -->
+{% if total_pages > 1 %}
+<div style="display:flex; align-items:center; justify-content:center; gap:6px; margin-top:36px; flex-wrap:wrap;">
+
+  {% if page > 1 %}
+  <a href="/skus?category={{ category }}&page={{ page-1 }}&status={{ status }}&q={{ q }}"
+     style="padding:7px 18px; border:1px solid #e2e8f0; border-radius:9px; font-size:.82rem; font-weight:600; color:#4f46e5; text-decoration:none; background:#fff;">
+    ← Prev
+  </a>
+  {% else %}
+  <span style="padding:7px 18px; border:1px solid #f1f5f9; border-radius:9px; font-size:.82rem; color:#d1d5db; background:#f9fafb;">← Prev</span>
+  {% endif %}
+
+  {% set start_p = [1, page - 2] | max %}
+  {% set end_p   = [total_pages, page + 2] | min %}
+
+  {% if start_p > 1 %}
+  <a href="/skus?category={{ category }}&page=1&status={{ status }}&q={{ q }}"
+     style="padding:7px 13px; border:1px solid #e2e8f0; border-radius:9px; font-size:.82rem; color:#64748b; text-decoration:none; background:#fff;">1</a>
+  {% if start_p > 2 %}<span style="color:#94a3b8; padding:0 4px;">…</span>{% endif %}
+  {% endif %}
+
+  {% for p in range(start_p, end_p + 1) %}
+  <a href="/skus?category={{ category }}&page={{ p }}&status={{ status }}&q={{ q }}"
+     style="padding:7px 13px; border-radius:9px; font-size:.82rem; font-weight:600; text-decoration:none;
+            {% if p == page %}background:#4f46e5; color:#fff; border:1px solid #4f46e5;
+            {% else %}background:#fff; color:#64748b; border:1px solid #e2e8f0;{% endif %}">
+    {{ p }}
+  </a>
+  {% endfor %}
+
+  {% if end_p < total_pages %}
+  {% if end_p < total_pages - 1 %}<span style="color:#94a3b8; padding:0 4px;">…</span>{% endif %}
+  <a href="/skus?category={{ category }}&page={{ total_pages }}&status={{ status }}&q={{ q }}"
+     style="padding:7px 13px; border:1px solid #e2e8f0; border-radius:9px; font-size:.82rem; color:#64748b; text-decoration:none; background:#fff;">{{ total_pages }}</a>
+  {% endif %}
+
+  {% if page < total_pages %}
+  <a href="/skus?category={{ category }}&page={{ page+1 }}&status={{ status }}&q={{ q }}"
+     style="padding:7px 18px; border:1px solid #e2e8f0; border-radius:9px; font-size:.82rem; font-weight:600; color:#4f46e5; text-decoration:none; background:#fff;">
+    Next →
+  </a>
+  {% else %}
+  <span style="padding:7px 18px; border:1px solid #f1f5f9; border-radius:9px; font-size:.82rem; color:#d1d5db; background:#f9fafb;">Next →</span>
+  {% endif %}
+
+</div>
+<p style="text-align:center; font-size:.75rem; color:#94a3b8; margin-top:12px;">
+  Page {{ page }} of {{ total_pages }}
+</p>
+{% endif %}
+
+{% endif %}{# end category/no-category #}
+
+{% endblock %}

@@ -29,10 +29,11 @@ _TRUE_VALUES        = {"true", "1", "yes"}
 def load_csvs_from_folder(folder_path: str) -> tuple[list[dict], list[str]]:
     """
     Read every *.csv file in folder_path.
+    Category is derived from the filename stem (e.g. men.csv → "men").
 
     Returns
     -------
-    sku_list   : list of {sku_id, container, reprocess}
+    sku_list   : list of {sku_id, container, reprocess, category}
     csv_files  : list of filenames that were loaded
     """
     folder = Path(folder_path)
@@ -49,15 +50,18 @@ def load_csvs_from_folder(folder_path: str) -> tuple[list[dict], list[str]]:
     merged: dict[str, dict] = {}
 
     for csv_path in csv_paths:
+        category = csv_path.stem.lower()   # men.csv → "men"
         for row in _read_single_csv(csv_path):
             sku_id   = row["sku_id"]
-            existing = merged.get(sku_id, {"container": None, "reprocess": False})
+            existing = merged.get(sku_id, {"container": None, "reprocess": False, "category": category})
             merged[sku_id] = {
                 "sku_id":    sku_id,
                 # last non-empty container hint wins
                 "container": row["container"] or existing["container"],
                 # True wins
                 "reprocess": row["reprocess"] or existing["reprocess"],
+                # first file wins for category
+                "category":  existing.get("category") or category,
             }
 
     sku_list = list(merged.values())
@@ -87,12 +91,12 @@ def _read_single_csv(csv_path: Path) -> list[dict]:
         has_reprocess = _REPROCESS_COL in fieldnames
 
         for row in reader:
-            sku_id = row.get(sku_col, "").strip()
+            sku_id = (row.get(sku_col) or "").strip()
             if not sku_id:
                 continue
 
-            container_val = row.get(_CONTAINER_COL, "").strip() if has_container else ""
-            reprocess_val = row.get(_REPROCESS_COL, "").strip().lower() if has_reprocess else ""
+            container_val = (row.get(_CONTAINER_COL) or "").strip() if has_container else ""
+            reprocess_val = (row.get(_REPROCESS_COL) or "").strip().lower() if has_reprocess else ""
 
             rows.append({
                 "sku_id":    sku_id,

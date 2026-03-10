@@ -93,6 +93,7 @@ def init_db() -> None:
             sku_id      VARCHAR(200) NOT NULL,
             container   VARCHAR(100),
             reprocess   TINYINT(1)   DEFAULT 0,
+            category    VARCHAR(100),
             status      VARCHAR(20)  DEFAULT 'pending',
             worker_id   VARCHAR(100),
             claimed_at  DATETIME,
@@ -103,6 +104,15 @@ def init_db() -> None:
             INDEX idx_queue_run   (run_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
+    # Add category column to sku_queue if upgrading existing DB
+    try:
+        cur.execute("ALTER TABLE sku_queue ADD COLUMN category VARCHAR(100)")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass   # column already exists — safe to ignore
+        else:
+            raise
 
     # ── SKU results (canonical, upserted on every run) ────────
     cur.execute("""
@@ -111,6 +121,7 @@ def init_db() -> None:
             run_id              VARCHAR(36)  NOT NULL,
             sku_id              VARCHAR(200) NOT NULL,
             status              VARCHAR(20)  DEFAULT 'pending',
+            category            VARCHAR(100),
             container_name      VARCHAR(100),
             container_source    VARCHAR(20),
             reprocess           TINYINT(1)   DEFAULT 0,
@@ -126,9 +137,28 @@ def init_db() -> None:
             reprocessed_at      DATETIME,
             UNIQUE KEY uq_sku_id  (sku_id),
             INDEX      idx_run_id (run_id),
-            INDEX      idx_status (status)
+            INDEX      idx_status (status),
+            INDEX      idx_category (category)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
+    # Add category column to sku_results if upgrading existing DB
+    try:
+        cur.execute("ALTER TABLE sku_results ADD COLUMN category VARCHAR(100)")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass   # column already exists — safe to ignore
+        else:
+            raise
+
+    try:
+        cur.execute("ALTER TABLE sku_results ADD INDEX idx_category (category)")
+        conn.commit()
+    except Exception as e:
+        if "1061" in str(e) or "Duplicate key name" in str(e):
+            pass   # index already exists — safe to ignore
+        else:
+            raise
 
     # ── Per-image audit trail ─────────────────────────────────
     cur.execute("""
@@ -200,12 +230,12 @@ def insert_queue_batch(run_id: str, sku_list: list[dict]) -> int:
     conn = _conn()
     cur  = conn.cursor()
     rows = [
-        (run_id, s["sku_id"], s.get("container"), 1 if s["reprocess"] else 0)
+        (run_id, s["sku_id"], s.get("container"), 1 if s["reprocess"] else 0, s.get("category"))
         for s in sku_list
     ]
     cur.executemany("""
-        INSERT INTO sku_queue (run_id, sku_id, container, reprocess, status)
-        VALUES (%s, %s, %s, %s, 'pending')
+        INSERT INTO sku_queue (run_id, sku_id, container, reprocess, category, status)
+        VALUES (%s, %s, %s, %s, %s, 'pending')
     """, rows)
     conn.commit()
     inserted = len(rows)
@@ -249,7 +279,7 @@ def claim_next_task(run_id: str, worker_id: str) -> Optional[dict]:
         # Within a single run_id each worker processes one task at a time,
         # so (run_id, worker_id, status='running') is unique here.
         cur.execute("""
-            SELECT id, sku_id, container, reprocess
+            SELECT id, sku_id, container, reprocess, category
             FROM   sku_queue
             WHERE  run_id = %s AND worker_id = %s AND status = 'running'
             ORDER  BY claimed_at DESC
@@ -331,6 +361,7 @@ def upsert_sku_result(
     azure_urls:         list[str],
     error_code:         Optional[str] = None,
     error_msg:          Optional[str] = None,
+    category:           Optional[str] = None,
 ) -> None:
     """
     INSERT the first time a SKU is seen; UPDATE on every subsequent run.
@@ -342,14 +373,15 @@ def upsert_sku_result(
 
     cur.execute("""
         INSERT INTO sku_results
-            (run_id, sku_id, status, container_name, container_source,
+            (run_id, sku_id, status, category, container_name, container_source,
              reprocess, blob_count, cloudinary_sent, cloudinary_skipped,
              azure_uploaded, cloudinary_urls, azure_urls,
              error_code, error_msg, last_processed_at, reprocessed_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
             run_id              = VALUES(run_id),
             status              = VALUES(status),
+            category            = VALUES(category),
             container_name      = VALUES(container_name),
             container_source    = VALUES(container_source),
             reprocess           = VALUES(reprocess),
@@ -364,7 +396,7 @@ def upsert_sku_result(
             last_processed_at   = VALUES(last_processed_at),
             reprocessed_at      = IF(VALUES(reprocess) = 1, VALUES(last_processed_at), reprocessed_at)
     """, (
-        run_id, sku_id, status, container_name, container_source,
+        run_id, sku_id, status, category, container_name, container_source,
         1 if reprocess else 0,
         blob_count, cloudinary_sent, cloudinary_skipped, azure_uploaded,
         json.dumps(cloudinary_urls),
@@ -378,17 +410,19 @@ def upsert_sku_result(
     conn.close()
 
 
-def mark_skipped(run_id: str, sku_id: str) -> None:
+def mark_skipped(run_id: str, sku_id: str, category: Optional[str] = None) -> None:
     conn = _conn()
     cur  = conn.cursor()
+    now  = datetime.now()
     cur.execute("""
-        INSERT INTO sku_results (run_id, sku_id, status, last_processed_at)
-        VALUES (%s, %s, 'skipped', %s)
+        INSERT INTO sku_results (run_id, sku_id, status, category, last_processed_at)
+        VALUES (%s, %s, 'skipped', %s, %s)
         ON DUPLICATE KEY UPDATE
             run_id            = VALUES(run_id),
             status            = 'skipped',
+            category          = COALESCE(VALUES(category), category),
             last_processed_at = VALUES(last_processed_at)
-    """, (run_id, sku_id, datetime.now()))
+    """, (run_id, sku_id, category, now))
     conn.commit()
     cur.close()
     conn.close()
