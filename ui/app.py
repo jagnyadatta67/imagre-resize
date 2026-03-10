@@ -40,6 +40,7 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
+TARGET_CONTAINER   = os.getenv("TARGET_CONTAINER", "lifestyle-converted")
 
 app = Flask(__name__)
 app.secret_key = "pipeline-ui-secret"
@@ -85,8 +86,8 @@ def make_original_sas_url(processed_azure_url: str) -> str:
     Processed : {container}/lifestyle-converted/{filename}
     Original  : {container}/lifestyle/{filename}
     """
-    if processed_azure_url and "/lifestyle-converted/" in processed_azure_url:
-        original_url = processed_azure_url.replace("/lifestyle-converted/", "/lifestyle/")
+    if processed_azure_url and f"/{TARGET_CONTAINER}/" in processed_azure_url:
+        original_url = processed_azure_url.replace(f"/{TARGET_CONTAINER}/", "/lifestyle/")
         return make_sas_url(original_url)
     return ""
 
