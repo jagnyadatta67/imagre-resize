@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 import mysql.connector
+from mysql.connector import pooling as _mysql_pooling
 from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, url_for
@@ -42,17 +43,50 @@ AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
 TARGET_CONTAINER   = os.getenv("TARGET_CONTAINER", "lifestyle-converted")
 
+# ── Cloudflare CDN — container → CF domain mapping ────────────
+# Reverse of DOMAIN_TO_CONTAINER in config.py.
+# Processed images are served via CF Image Resizing — zero Azure egress.
+_CF_DOMAIN_MAP: dict[str, str] = {
+    "in-media-ea": "media-ea.landmarkshops.in",
+    "in-media":    "media.landmarkshops.in",
+    "in-media-us": "media-us.landmarkshops.in",
+    "in-media-uk": "media-uk.landmarkshops.in",
+}
+
+
 app = Flask(__name__)
 app.secret_key = "pipeline-ui-secret"
 
 
-# ── DB helper ─────────────────────────────────────────────────
+# ── DB connection pool ────────────────────────────────────────
+# Single pool shared across all Flask requests.
+# pool_size=5 is enough for the UI — all queries are short reads.
+# Connections are returned to the pool when db.close() is called.
 
-def get_db():
-    return mysql.connector.connect(
-        host=MYSQL_HOST, port=MYSQL_PORT,
-        database=MYSQL_DB, user=MYSQL_USER, password=MYSQL_PASSWORD,
-    )
+_UI_POOL: _mysql_pooling.MySQLConnectionPool | None = None
+
+
+def _get_pool() -> _mysql_pooling.MySQLConnectionPool:
+    global _UI_POOL
+    if _UI_POOL is None:
+        _UI_POOL = _mysql_pooling.MySQLConnectionPool(
+            pool_name  = "ui",
+            pool_size  = 5,
+            host       = MYSQL_HOST,
+            port       = MYSQL_PORT,
+            database   = MYSQL_DB,
+            user       = MYSQL_USER,
+            password   = MYSQL_PASSWORD,
+            autocommit = True,
+            charset    = "utf8mb4",
+            collation  = "utf8mb4_unicode_ci",
+        )
+    return _UI_POOL
+
+
+def get_db() -> mysql.connector.MySQLConnection:
+    """Return a pooled connection. Caller must call db.close() to return it."""
+    return _get_pool().get_connection()
 
 
 # ── Azure SAS helpers ─────────────────────────────────────────
@@ -90,6 +124,43 @@ def make_original_sas_url(processed_azure_url: str) -> str:
         original_url = processed_azure_url.replace(f"/{TARGET_CONTAINER}/", "/lifestyle/")
         return make_sas_url(original_url)
     return ""
+
+
+def make_cf_url(azure_url: str) -> str:
+    """
+    Convert an Azure blob URL to a plain Cloudflare CDN URL (no resizing).
+
+    Azure : https://lmgonlinemedia.blob.core.windows.net/{container}/{blob_path}
+    CF    : https://{cf_domain}/{blob_path}
+
+    Returns "" when the container is not in _CF_DOMAIN_MAP —
+    caller should fall back to SAS URL.
+    """
+    if not azure_url:
+        return ""
+    try:
+        parsed    = urlparse(azure_url)
+        parts     = parsed.path.lstrip("/").split("/", 1)
+        container = parts[0]
+        blob_path = parts[1] if len(parts) > 1 else ""
+        domain    = _CF_DOMAIN_MAP.get(container)
+        if not domain or not blob_path:
+            return ""
+        return f"https://{domain}/{blob_path}"
+    except Exception:
+        return ""
+
+
+def make_cf_original_url(processed_azure_url: str) -> str:
+    """
+    Derive CF CDN URL for the original (pre-processing) image.
+    Swaps /{TARGET_CONTAINER}/ → /lifestyle/ in the blob path, then builds CF URL.
+    Returns "" when container not mapped or path doesn't contain TARGET_CONTAINER.
+    """
+    if not processed_azure_url or f"/{TARGET_CONTAINER}/" not in processed_azure_url:
+        return ""
+    original_azure = processed_azure_url.replace(f"/{TARGET_CONTAINER}/", "/lifestyle/")
+    return make_cf_url(original_azure)
 
 
 # ── Template filters ──────────────────────────────────────────
@@ -221,17 +292,21 @@ def _build_business_results(cur, query: str) -> list:
         seen   = set()
         images = []
         for img in all_imgs:
-            fname = img["filename"]
+            fname     = img["filename"]
+            azure_url = img["azure_url"] or ""
             if fname and fname not in seen:
                 seen.add(fname)
-                processed_sas = make_sas_url(img["azure_url"]) if img["azure_url"] else ""
-                original_sas  = make_original_sas_url(img["azure_url"]) if img["azure_url"] else ""
+
+                # CF CDN URL — plain, no resizing; falls back to Azure SAS if unmapped
+                processed_url = make_cf_url(azure_url) or make_sas_url(azure_url)
+                original_url  = make_cf_original_url(azure_url) or make_original_sas_url(azure_url)
+
                 images.append({
-                    "filename":      fname,
-                    "processed_url": processed_sas,
-                    "original_url":  original_sas,
-                    "has_original":  bool(original_sas),
-                    "status":        img["status"],
+                    "filename":       fname,
+                    "processed_url":  processed_url,
+                    "original_url":   original_url,
+                    "has_original":   bool(original_url),
+                    "status":         img["status"],
                 })
         images.sort(key=lambda x: x["filename"])
         sku["images"] = images
@@ -286,16 +361,16 @@ def index():
 
     db  = get_db()
     cur = db.cursor(dictionary=True)
+    try:
+        stats       = _get_stats(cur)
+        recent_runs = _get_recent_runs(cur)
+        failed_skus = _get_failed_skus(cur)
 
-    stats       = _get_stats(cur)
-    recent_runs = _get_recent_runs(cur)
-    failed_skus = _get_failed_skus(cur)
-
-    business_results             = _build_business_results(cur, bq) if bq else []
-    dev_sku, dev_images          = _build_dev_sku(cur, dq) if dq else (None, [])
-
-    cur.close()
-    db.close()
+        business_results    = _build_business_results(cur, bq) if bq else []
+        dev_sku, dev_images = _build_dev_sku(cur, dq) if dq else (None, [])
+    finally:
+        cur.close()
+        db.close()   # returns connection to pool
 
     return render_template(
         "index.html",
@@ -318,19 +393,21 @@ def api_run_skus(run_id: str):
     """
     db  = get_db()
     cur = db.cursor(dictionary=True)
-    cur.execute("""
-        SELECT q.id, q.sku_id, q.status, q.worker_id,
-               q.claimed_at, q.finished_at, q.error_msg,
-               r.container_name, r.blob_count,
-               r.azure_uploaded, r.error_code
-        FROM   sku_queue q
-        LEFT JOIN sku_results r ON r.sku_id = q.sku_id
-        WHERE  q.run_id = %s
-        ORDER  BY q.id
-    """, (run_id,))
-    rows = cur.fetchall()
-    cur.close()
-    db.close()
+    try:
+        cur.execute("""
+            SELECT q.id, q.sku_id, q.status, q.worker_id,
+                   q.claimed_at, q.finished_at, q.error_msg,
+                   r.container_name, r.blob_count,
+                   r.azure_uploaded, r.error_code
+            FROM   sku_queue q
+            LEFT JOIN sku_results r ON r.sku_id = q.sku_id
+            WHERE  q.run_id = %s
+            ORDER  BY q.id
+        """, (run_id,))
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()   # returns connection to pool
 
     for row in rows:
         # Serialize datetimes for JSON

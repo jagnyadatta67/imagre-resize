@@ -49,7 +49,7 @@ from typing import Optional
 
 from tqdm import tqdm
 
-from config import BULK_WORKERS
+from config import BULK_WORKERS, VERBOSE_LOG
 from modules import db
 from modules.azure_client import AzureClient
 from modules.converter import convert_image_bytes
@@ -72,6 +72,17 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("run")
+
+# ── Suppress noisy third-party loggers unless VERBOSE_LOG=true ──
+if not VERBOSE_LOG:
+    for _noisy in [
+        "azure.core.pipeline.policies.http_logging_policy",
+        "azure.core",
+        "azure.storage",
+        "urllib3",
+        "requests",
+    ]:
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 
 # ============================================================

@@ -95,7 +95,7 @@
       <!-- Image grid -->
       <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:12px;">
         {% for img in sku.images %}
-        <div class="img-card">
+        <div class="img-card" onmouseenter="showHoverPanel(this)" onmouseleave="hideHoverPanel()">
 
           <!-- Image container with aspect ratio -->
           <div style="aspect-ratio:3/4; background:#f1f5f9; position:relative; overflow:hidden;">
@@ -108,7 +108,8 @@
               data-mode="processed"
               alt="{{ img.filename }}"
               loading="lazy"
-              style="width:100%; height:100%; object-fit:cover; transition:opacity .2s;"
+              style="width:100%; height:100%; object-fit:cover; transition:opacity .2s; cursor:pointer;"
+              onclick="openLightbox(this)"
               onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
             />
             <div style="display:none; width:100%; height:100%; align-items:center; justify-content:center; color:#cbd5e1; font-size:2rem;">🖼️</div>
@@ -130,13 +131,10 @@
               {{ img.filename }}
             </p>
             {% if img.has_original %}
-            <button
-              class="img-toggle-btn"
-              onclick="toggleImgMode(this)"
-              style="width:100%;"
-            >
-              Show Original
-            </button>
+            <div style="display:flex; gap:4px;">
+              <button class="img-tab-btn" onclick="setImgMode(this,'original')"  data-tab="original">Original</button>
+              <button class="img-tab-btn active" onclick="setImgMode(this,'processed')" data-tab="processed">Processed</button>
+            </div>
             {% else %}
             <span style="font-size:.68rem; color:#d1d5db;">No original available</span>
             {% endif %}
@@ -625,6 +623,83 @@ FAILED_SKU_ID,,true</pre>
 
 
 <!-- ════════════════════════════════════════════════════════════
+     HOVER PANEL
+     ════════════════════════════════════════════════════════════ -->
+<div id="biz-hover-panel" style="
+  display:none; position:fixed; z-index:9998; pointer-events:none;
+  background:#fff; border-radius:14px;
+  box-shadow:0 12px 48px rgba(0,0,0,0.22);
+  padding:10px; width:260px;">
+  <img id="hover-panel-img" src="" alt=""
+    style="width:100%; border-radius:8px; object-fit:contain; display:block;"/>
+  <div id="hover-panel-label"
+    style="font-size:.68rem; color:#94a3b8; text-align:center; margin-top:6px;
+           font-family:monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+  </div>
+  <div id="hover-panel-mode"
+    style="font-size:.65rem; font-weight:600; text-align:center; margin-top:2px; color:#6366f1;">
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
+     LIGHTBOX
+     ════════════════════════════════════════════════════════════ -->
+<div id="biz-lightbox" onclick="closeLightbox()" style="
+  display:none; position:fixed; inset:0; z-index:9999;
+  background:rgba(0,0,0,0.88);
+  align-items:center; justify-content:center; flex-direction:column;">
+
+  <div onclick="event.stopPropagation()" style="
+    position:relative; display:flex; flex-direction:column;
+    align-items:center; max-width:90vw;">
+
+    <!-- Close -->
+    <button onclick="closeLightbox()" style="
+      position:absolute; top:-44px; right:0;
+      background:none; border:none; color:#e2e8f0;
+      font-size:1.6rem; cursor:pointer; line-height:1;"
+      title="Close (Esc)">✕</button>
+
+    <!-- Full image -->
+    <img id="lightbox-img" src="" alt=""
+      style="max-height:82vh; max-width:88vw; object-fit:contain;
+             border-radius:10px; box-shadow:0 24px 80px rgba(0,0,0,0.6);
+             display:block;"/>
+
+    <!-- Bottom bar -->
+    <div style="
+      display:flex; align-items:center; justify-content:space-between;
+      width:100%; margin-top:14px; gap:16px; flex-wrap:wrap;">
+
+      <!-- Filename -->
+      <span id="lightbox-filename"
+        style="color:#94a3b8; font-size:.78rem; font-family:monospace;
+               flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+      </span>
+
+      <!-- Toggle buttons -->
+      <div style="display:flex; gap:8px; flex-shrink:0;">
+        <button id="lb-btn-processed" onclick="lbSetMode('processed')" style="
+          padding:6px 16px; border-radius:8px; border:2px solid #6366f1;
+          background:#6366f1; color:#fff; font-size:.8rem; font-weight:600;
+          cursor:pointer; transition:all .15s;">
+          Processed
+        </button>
+        <button id="lb-btn-original" onclick="lbSetMode('original')" style="
+          padding:6px 16px; border-radius:8px; border:2px solid #6366f1;
+          background:transparent; color:#6366f1; font-size:.8rem; font-weight:600;
+          cursor:pointer; transition:all .15s;">
+          Original
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
      SCRIPTS
      ════════════════════════════════════════════════════════════ -->
 <script>
@@ -637,30 +712,128 @@ function switchTab(name, btn) {
   btn.classList.add('active');
 }
 
-// ── Business image toggle (Processed ↔ Original) ──────────────
-function toggleImgMode(btn) {
-  const card      = btn.closest('.img-card');
-  const img       = card.querySelector('.biz-img');
-  const processed = img.dataset.processed;
-  const original  = img.dataset.original;
-  const mode      = img.dataset.mode;
+// ── Business image toggle (Original ↔ Processed two-tab) ────────
+function setImgMode(tabBtn, mode) {
+  const card = tabBtn.closest('.img-card');
+  const img  = card.querySelector('.biz-img');
 
-  if (mode === 'processed' && original) {
-    img.src         = original;
-    img.dataset.mode = 'original';
-    btn.textContent  = 'Show Processed';
-    btn.style.background = '#e0e7ff';
-    btn.style.borderColor = '#818cf8';
-    btn.style.color = '#4f46e5';
+  // Switch the card image
+  img.src          = mode === 'original' ? img.dataset.original : img.dataset.processed;
+  img.dataset.mode = mode;
+
+  // Highlight the active tab, reset the other
+  card.querySelectorAll('.img-tab-btn').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === mode);
+  });
+
+  // Keep hover panel in sync if it's showing this card
+  if (_hoverCard === card) _updateHoverPanel(card);
+}
+
+
+// ════════════════════════════════════════════════════════════
+// HOVER PANEL
+// ════════════════════════════════════════════════════════════
+
+const _hoverPanel = document.getElementById('biz-hover-panel');
+const _hoverImg   = document.getElementById('hover-panel-img');
+const _hoverLabel = document.getElementById('hover-panel-label');
+const _hoverMode  = document.getElementById('hover-panel-mode');
+let   _hoverCard  = null;
+
+function _updateHoverPanel(card) {
+  const img  = card.querySelector('.biz-img');
+  if (!img) return;
+  _hoverImg.src          = img.src;
+  _hoverLabel.textContent = img.alt;
+  _hoverMode.textContent  = img.dataset.mode === 'original' ? '🔄 Original' : '✅ Processed';
+}
+
+function showHoverPanel(card) {
+  const img = card.querySelector('.biz-img');
+  if (!img) return;
+
+  _hoverCard = card;
+  _updateHoverPanel(card);
+
+  // Position: right of card, or left if near viewport edge
+  const rect = card.getBoundingClientRect();
+  const panelW = 280;
+  let left = rect.right + 14;
+  if (left + panelW > window.innerWidth - 8) {
+    left = rect.left - panelW - 14;
+  }
+  let top = rect.top;
+  if (top + 340 > window.innerHeight) {
+    top = window.innerHeight - 340;
+  }
+
+  _hoverPanel.style.left    = left + 'px';
+  _hoverPanel.style.top     = Math.max(8, top) + 'px';
+  _hoverPanel.style.display = 'block';
+}
+
+function hideHoverPanel() {
+  _hoverPanel.style.display = 'none';
+  _hoverCard = null;
+}
+
+
+// ════════════════════════════════════════════════════════════
+// LIGHTBOX
+// ════════════════════════════════════════════════════════════
+
+const _lightbox        = document.getElementById('biz-lightbox');
+const _lbImg           = document.getElementById('lightbox-img');
+const _lbFilename      = document.getElementById('lightbox-filename');
+const _lbBtnProcessed  = document.getElementById('lb-btn-processed');
+const _lbBtnOriginal   = document.getElementById('lb-btn-original');
+
+// Thumbnail URLs (shown in grid card)
+let _lbProcessedUrl = '';
+let _lbOriginalUrl  = '';
+let _lbHasOriginal  = false;
+
+function openLightbox(imgEl) {
+  _lbProcessedUrl = imgEl.dataset.processed || imgEl.src;
+  _lbOriginalUrl  = imgEl.dataset.original  || '';
+  _lbHasOriginal  = !!_lbOriginalUrl;
+
+  _lbFilename.textContent = imgEl.alt;
+
+  // Hide Original button if no original available
+  _lbBtnOriginal.style.display = _lbHasOriginal ? '' : 'none';
+
+  // Open lightbox in same mode currently shown on the card
+  lbSetMode(imgEl.dataset.mode || 'processed');
+
+  _lightbox.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  _lightbox.style.display  = 'none';
+  document.body.style.overflow = '';
+}
+
+function lbSetMode(mode) {
+  if (mode === 'original' && _lbHasOriginal) {
+    _lbImg.src = _lbOriginalUrl;
+    _lbBtnOriginal.style.background  = '#6366f1';
+    _lbBtnOriginal.style.color       = '#fff';
+    _lbBtnProcessed.style.background = 'transparent';
+    _lbBtnProcessed.style.color      = '#6366f1';
   } else {
-    img.src         = processed;
-    img.dataset.mode = 'processed';
-    btn.textContent  = 'Show Original';
-    btn.style.background = '';
-    btn.style.borderColor = '';
-    btn.style.color = '';
+    _lbImg.src = _lbProcessedUrl;
+    _lbBtnProcessed.style.background = '#6366f1';
+    _lbBtnProcessed.style.color      = '#fff';
+    _lbBtnOriginal.style.background  = 'transparent';
+    _lbBtnOriginal.style.color       = '#6366f1';
   }
 }
+
+// ESC to close lightbox
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
 
 // ── Copy text to clipboard ────────────────────────────────────
 function copyText(text, btn) {

@@ -65,8 +65,10 @@
     /* ── Image cards ──────────────────────────────── */
     .img-card { border-radius:12px; border:1px solid #e5e7eb; overflow:hidden; background:#fff; transition:box-shadow .15s; }
     .img-card:hover { box-shadow:0 4px 16px rgba(0,0,0,.1); }
-    .img-toggle-btn { font-size:.7rem; padding:3px 10px; border-radius:6px; cursor:pointer; border:1px solid #d1d5db; background:#f9fafb; color:#6b7280; transition:all .15s; }
-    .img-toggle-btn:hover { background:#e0e7ff; border-color:#818cf8; color:#4f46e5; }
+    .img-tab-btn { flex:1; font-size:.68rem; font-weight:600; padding:4px 2px; border-radius:6px; cursor:pointer; border:1.5px solid #6366f1; transition:all .15s; text-align:center; }
+    .img-tab-btn.active  { background:#6366f1; color:#fff; }
+    .img-tab-btn:not(.active) { background:transparent; color:#6366f1; }
+    .img-tab-btn:hover:not(.active) { background:#e0e7ff; }
   </style>
 </head>
 
@@ -85,12 +87,12 @@
       <!-- Spacer -->
       <div style="flex:1;"></div>
 
-      <!-- View toggle -->
+      <!-- View toggle (Developer button hidden by default; visible only via ?dev=1) -->
       <div class="view-pill" id="viewPill">
         <button class="view-btn" id="bizBtn" onclick="setView('business')">
           🛍️ Business
         </button>
-        <button class="view-btn" id="devBtn" onclick="setView('dev')">
+        <button class="view-btn" id="devBtn" onclick="setView('dev')" style="display:none;">
           ⚙️ Developer
         </button>
       </div>
@@ -140,13 +142,23 @@
 
     // Restore last view on load
     document.addEventListener('DOMContentLoaded', function () {
-      // If URL has dq param → force dev view
-      const params = new URLSearchParams(window.location.search);
-      if (params.has('dq')) {
-        setView('dev');
+      const params  = new URLSearchParams(window.location.search);
+      const devMode = params.has('dev');   // ?dev=1 unlocks developer view
+
+      if (devMode) {
+        // Show developer button when ?dev=1 is in URL
+        document.getElementById('devBtn').style.display = '';
+
+        // Force dev view if ?dq= param present or ?dev=1 alone
+        if (params.has('dq') || params.get('dev') === '1') {
+          setView('dev');
+        } else {
+          const saved = localStorage.getItem(BIZ_KEY) || 'business';
+          applyView(saved);
+        }
       } else {
-        const saved = localStorage.getItem(BIZ_KEY) || 'business';
-        applyView(saved);
+        // No ?dev= param — always business view, dev button stays hidden
+        applyView('business');
       }
     });
   </script>
