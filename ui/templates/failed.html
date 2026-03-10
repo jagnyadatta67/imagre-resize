@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Failed SKUs{% endblock %}
+
+{% block content %}
+
+<!-- ── Header ─────────────────────────────────────────────── -->
+<div class="mb-6 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-800">❌ Failed SKUs</h1>
+    <p class="text-sm text-gray-500 mt-1">
+      {{ failed_skus | length }} SKU{{ 's' if failed_skus | length != 1 else '' }} failed
+    </p>
+  </div>
+  <a href="/" class="btn-outline">← Dashboard</a>
+</div>
+
+{% if failed_skus %}
+
+<!-- ── Table ──────────────────────────────────────────────── -->
+<div class="card p-0 overflow-hidden">
+  <div class="overflow-x-auto">
+    <table class="tbl">
+      <thead>
+        <tr>
+          <th>SKU ID</th>
+          <th>Container</th>
+          <th>Blobs</th>
+          <th>Error Code</th>
+          <th>Error Message</th>
+          <th>Last Processed</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sku in failed_skus %}
+        <tr>
+
+          <!-- SKU ID -->
+          <td>
+            <span class="font-mono text-sm font-semibold text-gray-800">{{ sku.sku_id }}</span>
+          </td>
+
+          <!-- Container -->
+          <td>
+            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-medium">
+              {{ sku.container_name or '—' }}
+            </span>
+          </td>
+
+          <!-- Blob count -->
+          <td class="text-center">
+            <span class="font-semibold text-gray-700">{{ sku.blob_count or 0 }}</span>
+          </td>
+
+          <!-- Error code -->
+          <td>
+            {% if sku.error_code %}
+            <span class="font-mono text-xs bg-red-50 text-red-700 px-2 py-0.5 rounded">
+              {{ sku.error_code }}
+            </span>
+            {% else %}
+            <span class="text-gray-300">—</span>
+            {% endif %}
+          </td>
+
+          <!-- Error message (truncated, full on hover) -->
+          <td class="max-w-xs">
+            {% if sku.error_msg %}
+            <p class="text-xs text-gray-500 truncate font-mono" title="{{ sku.error_msg }}">
+              {{ sku.error_msg[:100] }}{% if sku.error_msg | length > 100 %}…{% endif %}
+            </p>
+            {% else %}
+            <span class="text-gray-300 text-xs">—</span>
+            {% endif %}
+          </td>
+
+          <!-- Timestamp -->
+          <td class="text-xs text-gray-400 whitespace-nowrap">
+            {{ sku.last_processed_at | fmt_dt }}
+          </td>
+
+          <!-- View link -->
+          <td>
+            <a href="/sku/{{ sku.sku_id }}"
+               class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold whitespace-nowrap">
+              View →
+            </a>
+          </td>
+
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Reprocess hint ─────────────────────────────────────── -->
+<div class="mt-6 card bg-yellow-50 border-yellow-100">
+  <h3 class="font-semibold text-yellow-800 mb-2">💡 How to reprocess failed SKUs</h3>
+  <p class="text-sm text-yellow-700 mb-3">
+    Update your CSV with <code class="bg-yellow-100 px-1 rounded">reprocess=true</code> and run the pipeline again.
+    Already-done SKUs will be skipped automatically.
+  </p>
+  <pre class="bg-white border border-yellow-200 rounded-lg p-3 text-xs font-mono text-gray-700">sku_id,container,reprocess
+FAILED_SKU_ID_HERE,,true</pre>
+  <p class="text-xs text-yellow-600 mt-2">Then run: <code class="bg-yellow-100 px-1 rounded">python run.py input_csv</code></p>
+</div>
+
+{% else %}
+
+<!-- ── All good ───────────────────────────────────────────── -->
+<div class="card text-center py-16">
+  <p class="text-6xl mb-4">🎉</p>
+  <p class="text-xl font-semibold text-gray-700 mb-2">No failed SKUs!</p>
+  <p class="text-gray-400 text-sm">All processed SKUs completed successfully.</p>
+  <a href="/" class="btn-primary mt-6 inline-block">← Back to Dashboard</a>
+</div>
+
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Pipeline UI{% endblock %} — Bulk Image Pipeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* ── Badges ───────────────────────────────────── */
+    .badge { display:inline-flex; align-items:center; gap:3px; padding:2px 10px; border-radius:9999px; font-size:.72rem; font-weight:600; }
+    .badge-done       { background:#dcfce7; color:#166534; }
+    .badge-warn       { background:#fef9c3; color:#92400e; }
+    .badge-failed     { background:#fee2e2; color:#991b1b; }
+    .badge-skipped    { background:#fef3c7; color:#92400e; }
+    .badge-pending    { background:#f3f4f6; color:#374151; }
+    .badge-running    { background:#dbeafe; color:#1e40af; }
+    .badge-cloudinary { background:#ede9fe; color:#5b21b6; }
+    .badge-pillow     { background:#e0f2fe; color:#0c4a6e; }
+
+    /* ── Cards ────────────────────────────────────── */
+    .card { background:#fff; border-radius:14px; border:1px solid #e5e7eb; padding:20px; }
+
+    /* ── Stat cards ───────────────────────────────── */
+    .stat-card  { background:#fff; border-radius:14px; border:1px solid #e5e7eb; padding:18px 20px; }
+    .stat-value { font-size:2rem; font-weight:700; color:#1f2937; line-height:1; }
+    .stat-label { font-size:.78rem; color:#9ca3af; font-weight:500; margin-top:4px; }
+
+    /* ── Tables ───────────────────────────────────── */
+    .tbl { width:100%; font-size:.82rem; text-align:left; border-collapse:collapse; }
+    .tbl thead tr { background:#f9fafb; }
+    .tbl thead th { padding:10px 14px; color:#6b7280; font-weight:600; text-transform:uppercase; font-size:.7rem; letter-spacing:.04em; white-space:nowrap; }
+    .tbl tbody tr { border-top:1px solid #f3f4f6; transition:background .12s; }
+    .tbl tbody tr:hover { background:#f9fafb; }
+    .tbl tbody td { padding:10px 14px; color:#374151; vertical-align:middle; }
+
+    /* ── Buttons ──────────────────────────────────── */
+    .btn-primary { background:#4f46e5; color:#fff; border-radius:9px; padding:8px 18px; font-size:.83rem; font-weight:600; border:none; cursor:pointer; transition:background .15s; }
+    .btn-primary:hover { background:#4338ca; }
+    .btn-ghost   { background:transparent; border:1px solid #d1d5db; color:#6b7280; border-radius:9px; padding:6px 14px; font-size:.8rem; cursor:pointer; transition:all .15s; }
+    .btn-ghost:hover { border-color:#6b7280; color:#374151; }
+
+    /* ── View toggle pill ─────────────────────────── */
+    .view-pill { display:flex; background:#f1f5f9; border-radius:12px; padding:4px; gap:2px; }
+    .view-btn  { border-radius:9px; padding:7px 20px; font-size:.82rem; font-weight:600; cursor:pointer; border:none; transition:all .18s; color:#64748b; background:transparent; }
+    .view-btn.active-biz  { background:#fff; color:#059669; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+    .view-btn.active-dev  { background:#fff; color:#4f46e5; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+
+    /* ── Dev tabs ─────────────────────────────────── */
+    .tab-bar  { display:flex; gap:2px; border-bottom:2px solid #e5e7eb; margin-bottom:24px; }
+    .tab-btn  { padding:10px 22px; font-size:.84rem; font-weight:600; cursor:pointer; border:none; background:transparent; color:#9ca3af; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all .15s; }
+    .tab-btn.active { color:#4f46e5; border-bottom-color:#4f46e5; }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+
+    /* ── Mono text ────────────────────────────────── */
+    .mono { font-family:ui-monospace, "Cascadia Code", monospace; }
+
+    /* ── Scrollbar ────────────────────────────────── */
+    .overflow-x-auto { overflow-x:auto; }
+
+    /* ── Expandable row ───────────────────────────── */
+    .expand-row { display:none; }
+    .expand-row.open { display:table-row; }
+
+    /* ── Image cards ──────────────────────────────── */
+    .img-card { border-radius:12px; border:1px solid #e5e7eb; overflow:hidden; background:#fff; transition:box-shadow .15s; }
+    .img-card:hover { box-shadow:0 4px 16px rgba(0,0,0,.1); }
+    .img-toggle-btn { font-size:.7rem; padding:3px 10px; border-radius:6px; cursor:pointer; border:1px solid #d1d5db; background:#f9fafb; color:#6b7280; transition:all .15s; }
+    .img-toggle-btn:hover { background:#e0e7ff; border-color:#818cf8; color:#4f46e5; }
+  </style>
+</head>
+
+<body class="min-h-screen font-sans" style="background:#f8fafc; color:#1e293b;">
+
+  <!-- ── Navbar ─────────────────────────────────────────────── -->
+  <nav style="background:#fff; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:50;">
+    <div style="max-width:1400px; margin:0 auto; padding:0 24px; height:58px; display:flex; align-items:center; gap:16px;">
+
+      <!-- Logo -->
+      <a href="/" style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:1rem; color:#1e293b; text-decoration:none; flex-shrink:0;">
+        <span style="font-size:1.3rem;">🖼️</span>
+        <span>Pipeline UI</span>
+      </a>
+
+      <!-- Spacer -->
+      <div style="flex:1;"></div>
+
+      <!-- View toggle -->
+      <div class="view-pill" id="viewPill">
+        <button class="view-btn" id="bizBtn" onclick="setView('business')">
+          🛍️ Business
+        </button>
+        <button class="view-btn" id="devBtn" onclick="setView('dev')">
+          ⚙️ Developer
+        </button>
+      </div>
+
+    </div>
+  </nav>
+
+  <!-- ── Main ───────────────────────────────────────────────── -->
+  <main style="max-width:1400px; margin:0 auto; padding:32px 24px;">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- ── Footer ─────────────────────────────────────────────── -->
+  <footer style="max-width:1400px; margin:0 auto; padding:24px; text-align:center; font-size:.75rem; color:#94a3b8; border-top:1px solid #e2e8f0; margin-top:32px;">
+    Bulk Image Pipeline &nbsp;·&nbsp; Internal Tool
+  </footer>
+
+  <!-- ── View toggle script ─────────────────────────────────── -->
+  <script>
+    const BIZ_KEY = 'pipeline_view';
+
+    function setView(view) {
+      localStorage.setItem(BIZ_KEY, view);
+      applyView(view);
+    }
+
+    function applyView(view) {
+      const bizSection = document.getElementById('business-view');
+      const devSection = document.getElementById('dev-view');
+      const bizBtn     = document.getElementById('bizBtn');
+      const devBtn     = document.getElementById('devBtn');
+
+      if (!bizSection || !devSection) return;
+
+      if (view === 'dev') {
+        bizSection.style.display = 'none';
+        devSection.style.display = 'block';
+        bizBtn.classList.remove('active-biz');
+        devBtn.classList.add('active-dev');
+      } else {
+        bizSection.style.display = 'block';
+        devSection.style.display = 'none';
+        bizBtn.classList.add('active-biz');
+        devBtn.classList.remove('active-dev');
+      }
+    }
+
+    // Restore last view on load
+    document.addEventListener('DOMContentLoaded', function () {
+      // If URL has dq param → force dev view
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('dq')) {
+        setView('dev');
+      } else {
+        const saved = localStorage.getItem(BIZ_KEY) || 'business';
+        applyView(saved);
+      }
+    });
+  </script>
+
+</body>
+</html>

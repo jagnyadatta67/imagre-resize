@@ -1,0 +1,20 @@
+# Secrets
+.env
+*.json
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Logs
+logs/
+
+# Input data
+input_csv/*.csv
+
+# OS
+.DS_Store

@@ -1,0 +1,782 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+
+<!-- ════════════════════════════════════════════════════════════
+     BUSINESS VIEW
+     ════════════════════════════════════════════════════════════ -->
+<div id="business-view">
+
+  <!-- ── Hero search (centred when no results) ──────────────── -->
+  {% if not business_results %}
+  <div style="display:flex; flex-direction:column; align-items:center; padding:72px 0 48px;">
+    <div style="font-size:2.8rem; margin-bottom:12px;">🛍️</div>
+    <h1 style="font-size:1.7rem; font-weight:700; color:#1e293b; margin-bottom:6px;">Product Image Search</h1>
+    <p style="color:#94a3b8; font-size:.9rem; margin-bottom:32px;">Enter a SKU ID to view all processed product images</p>
+
+    <form method="get" action="/" style="width:100%; max-width:520px; display:flex; gap:10px;">
+      <input type="hidden" name="view" value="business"/>
+      <input
+        name="bq"
+        value="{{ bq }}"
+        placeholder="e.g. LM-10001234 or partial SKU…"
+        autofocus
+        style="flex:1; border:2px solid #e2e8f0; border-radius:12px; padding:14px 18px; font-size:.95rem; outline:none; transition:border .15s;"
+        onfocus="this.style.borderColor='#6366f1'"
+        onblur="this.style.borderColor='#e2e8f0'"
+      />
+      <button type="submit" class="btn-primary" style="padding:14px 28px; border-radius:12px; font-size:.95rem;">
+        Search
+      </button>
+    </form>
+
+    <!-- Quick stats strip -->
+    <div style="display:flex; gap:32px; margin-top:56px; text-align:center;">
+      <div>
+        <div style="font-size:1.6rem; font-weight:700; color:#10b981;">{{ stats.total or 0 }}</div>
+        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Total SKUs</div>
+      </div>
+      <div style="width:1px; background:#e2e8f0;"></div>
+      <div>
+        <div style="font-size:1.6rem; font-weight:700; color:#10b981;">{{ stats.done or 0 }}</div>
+        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Processed</div>
+      </div>
+      <div style="width:1px; background:#e2e8f0;"></div>
+      <div>
+        <div style="font-size:1.6rem; font-weight:700; color:#6366f1;">{{ stats.total_images or 0 }}</div>
+        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Images Available</div>
+      </div>
+    </div>
+  </div>
+
+  {% else %}
+  <!-- ── Search bar (compact, top-aligned when results exist) ── -->
+  <div style="display:flex; align-items:center; gap:14px; margin-bottom:28px; flex-wrap:wrap;">
+    <form method="get" action="/" style="display:flex; gap:8px; flex:1; min-width:260px; max-width:480px;">
+      <input type="hidden" name="view" value="business"/>
+      <input
+        name="bq"
+        value="{{ bq }}"
+        placeholder="Search SKU…"
+        style="flex:1; border:2px solid #e2e8f0; border-radius:10px; padding:9px 14px; font-size:.88rem; outline:none; transition:border .15s;"
+        onfocus="this.style.borderColor='#6366f1'"
+        onblur="this.style.borderColor='#e2e8f0'"
+      />
+      <button type="submit" class="btn-primary" style="padding:9px 20px; border-radius:10px;">Search</button>
+    </form>
+    <div style="color:#64748b; font-size:.83rem;">
+      <strong style="color:#1e293b;">{{ business_results | length }}</strong> SKU{{ 's' if business_results | length != 1 else '' }} found for
+      <span style="color:#6366f1; font-weight:600;">"{{ bq }}"</span>
+    </div>
+  </div>
+
+  <!-- ── Results ─────────────────────────────────────────────── -->
+  {% if business_results %}
+    {% for sku in business_results %}
+    <div class="card" style="margin-bottom:24px;">
+
+      <!-- SKU header row -->
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
+        <span class="mono" style="font-size:1rem; font-weight:700; color:#1e293b;">{{ sku.sku_id }}</span>
+        {{ sku.status | status_badge }}
+        <span style="font-size:.78rem; color:#94a3b8; margin-left:4px;">
+          {{ sku.images | length }} image{{ 's' if sku.images | length != 1 else '' }}
+          &nbsp;·&nbsp; Last processed {{ sku.last_processed_at | fmt_dt }}
+        </span>
+        {% if sku.status == 'failed' %}
+        <span style="margin-left:auto; font-size:.78rem; color:#ef4444; background:#fee2e2; padding:3px 10px; border-radius:6px;">
+          Processing failed — contact tech team
+        </span>
+        {% endif %}
+      </div>
+
+      {% if sku.images %}
+      <!-- Image grid -->
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:12px;">
+        {% for img in sku.images %}
+        <div class="img-card">
+
+          <!-- Image container with aspect ratio -->
+          <div style="aspect-ratio:3/4; background:#f1f5f9; position:relative; overflow:hidden;">
+            {% if img.processed_url %}
+            <img
+              class="biz-img"
+              src="{{ img.processed_url }}"
+              data-processed="{{ img.processed_url }}"
+              data-original="{{ img.original_url }}"
+              data-mode="processed"
+              alt="{{ img.filename }}"
+              loading="lazy"
+              style="width:100%; height:100%; object-fit:cover; transition:opacity .2s;"
+              onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';"
+            />
+            <div style="display:none; width:100%; height:100%; align-items:center; justify-content:center; color:#cbd5e1; font-size:2rem;">🖼️</div>
+            {% else %}
+            <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:2rem;">🖼️</div>
+            {% endif %}
+
+            <!-- Status dot -->
+            {% if img.status == 'done' %}
+            <div style="position:absolute; top:7px; right:7px; width:9px; height:9px; border-radius:50%; background:#10b981; border:2px solid #fff;"></div>
+            {% else %}
+            <div style="position:absolute; top:7px; right:7px; width:9px; height:9px; border-radius:50%; background:#ef4444; border:2px solid #fff;"></div>
+            {% endif %}
+          </div>
+
+          <!-- Filename + toggle -->
+          <div style="padding:8px 10px;">
+            <p style="font-size:.7rem; color:#94a3b8; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:6px;" title="{{ img.filename }}">
+              {{ img.filename }}
+            </p>
+            {% if img.has_original %}
+            <button
+              class="img-toggle-btn"
+              onclick="toggleImgMode(this)"
+              style="width:100%;"
+            >
+              Show Original
+            </button>
+            {% else %}
+            <span style="font-size:.68rem; color:#d1d5db;">No original available</span>
+            {% endif %}
+          </div>
+
+        </div>
+        {% endfor %}
+      </div>
+
+      {% else %}
+      <div style="padding:32px; text-align:center; color:#94a3b8; font-size:.85rem;">
+        No images found for this SKU
+      </div>
+      {% endif %}
+
+    </div>
+    {% endfor %}
+
+  {% else %}
+  <div class="card" style="text-align:center; padding:64px 32px;">
+    <div style="font-size:3rem; margin-bottom:12px;">🔍</div>
+    <div style="font-size:1.1rem; font-weight:600; color:#475569; margin-bottom:8px;">No SKUs found</div>
+    <div style="font-size:.85rem; color:#94a3b8;">
+      No match for <strong>"{{ bq }}"</strong>. Try a shorter or different SKU ID.
+    </div>
+  </div>
+  {% endif %}
+
+  {% endif %}
+
+</div><!-- /business-view -->
+
+
+<!-- ════════════════════════════════════════════════════════════
+     DEVELOPER VIEW
+     ════════════════════════════════════════════════════════════ -->
+<div id="dev-view" style="display:none;">
+
+  <!-- ── Summary stats row ──────────────────────────────────── -->
+  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:14px; margin-bottom:28px;">
+    <div class="stat-card">
+      <div class="stat-value">{{ stats.total or 0 }}</div>
+      <div class="stat-label">Total SKUs</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color:#10b981;">{{ stats.done or 0 }}</div>
+      <div class="stat-label">✅ Done</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color:#ef4444;">{{ stats.failed or 0 }}</div>
+      <div class="stat-label">❌ Failed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color:#f59e0b;">{{ stats.skipped or 0 }}</div>
+      <div class="stat-label">⏭️ Skipped</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value" style="color:#6366f1;">{{ stats.total_images or 0 }}</div>
+      <div class="stat-label">🖼️ Uploaded</div>
+    </div>
+  </div>
+
+  <!-- ── Dev Tabs ────────────────────────────────────────────── -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('runs', this)">🕐 Pipeline Runs</button>
+    <button class="tab-btn" onclick="switchTab('failed', this)">
+      ❌ Failed SKUs
+      {% if stats.failed and stats.failed > 0 %}
+      <span style="background:#fee2e2; color:#b91c1c; font-size:.68rem; font-weight:700; padding:1px 7px; border-radius:9999px; margin-left:4px;">
+        {{ stats.failed }}
+      </span>
+      {% endif %}
+    </button>
+    <button class="tab-btn" onclick="switchTab('skudetail', this)">🔍 SKU Detail</button>
+  </div>
+
+  <!-- ══ TAB: RUNS ════════════════════════════════════════════ -->
+  <div id="tab-runs" class="tab-panel active">
+    {% if recent_runs %}
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="overflow-x-auto">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>Run ID</th>
+              <th>CSV Folder</th>
+              <th>Total</th>
+              <th>✅ Done</th>
+              <th>❌ Failed</th>
+              <th>⏭ Skipped</th>
+              <th>Duration</th>
+              <th>Status</th>
+              <th>Started</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="runs-tbody">
+            {% for run in recent_runs %}
+            <!-- Run row -->
+            <tr>
+              <!-- Run ID: truncated with copy button -->
+              <td>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <span class="mono" style="font-size:.75rem; color:#475569;" title="{{ run.run_id }}">
+                    {{ run.run_id[:8] }}…
+                  </span>
+                  <button
+                    onclick="copyText('{{ run.run_id }}', this)"
+                    style="font-size:.65rem; padding:2px 7px; border-radius:5px; border:1px solid #e2e8f0; background:#f8fafc; color:#94a3b8; cursor:pointer;"
+                    title="Copy full Run ID"
+                  >copy</button>
+                </div>
+              </td>
+
+              <!-- CSV folder -->
+              <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.8rem; color:#64748b;" title="{{ run.csv_folder }}">
+                {{ run.csv_folder or '—' }}
+              </td>
+
+              <!-- Counts -->
+              <td style="font-weight:600;">{{ run.total_skus }}</td>
+              <td style="color:#10b981; font-weight:600;">{{ run.done_count }}</td>
+              <td style="color:#ef4444; font-weight:600;">{{ run.failed_count }}</td>
+              <td style="color:#f59e0b; font-weight:600;">{{ run.skipped_count }}</td>
+
+              <!-- Duration -->
+              <td style="color:#64748b; font-size:.8rem;">{{ run | run_duration }}</td>
+
+              <!-- Status -->
+              <td>{{ run.status | status_badge }}</td>
+
+              <!-- Started -->
+              <td style="font-size:.78rem; color:#94a3b8; white-space:nowrap;">{{ run.started_at | fmt_dt }}</td>
+
+              <!-- Expand button -->
+              <td>
+                <button
+                  class="btn-ghost"
+                  style="font-size:.75rem; padding:4px 12px;"
+                  onclick="toggleRunExpand('{{ run.run_id }}', this)"
+                >
+                  ▼ SKUs
+                </button>
+              </td>
+            </tr>
+
+            <!-- Expandable sub-row (loaded via AJAX) -->
+            <tr id="expand-{{ run.run_id }}" class="expand-row">
+              <td colspan="10" style="padding:0; background:#f8fafc;">
+                <div id="expand-content-{{ run.run_id }}" style="padding:16px 20px;">
+                  <div style="color:#94a3b8; font-size:.82rem;">Loading SKUs…</div>
+                </div>
+              </td>
+            </tr>
+
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% else %}
+    <div class="card" style="text-align:center; padding:64px;">
+      <div style="font-size:3rem; margin-bottom:12px;">📭</div>
+      <div style="font-weight:600; color:#475569; margin-bottom:8px;">No pipeline runs yet</div>
+      <div style="color:#94a3b8; font-size:.85rem; font-family:monospace; background:#f1f5f9; display:inline-block; padding:6px 14px; border-radius:8px;">
+        python run.py input_csv/
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ══ TAB: FAILED SKUS ═════════════════════════════════════ -->
+  <div id="tab-failed" class="tab-panel">
+    {% if failed_skus %}
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="overflow-x-auto">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>SKU ID</th>
+              <th>Error Code</th>
+              <th>Error Message</th>
+              <th>Container</th>
+              <th>Blobs</th>
+              <th>Run ID</th>
+              <th>Last Tried</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for sku in failed_skus %}
+            <tr>
+
+              <!-- SKU ID -->
+              <td>
+                <span class="mono" style="font-weight:600; font-size:.83rem;">{{ sku.sku_id }}</span>
+              </td>
+
+              <!-- Error code -->
+              <td>
+                {% if sku.error_code %}
+                <span style="font-family:monospace; font-size:.75rem; background:#fee2e2; color:#b91c1c; padding:2px 8px; border-radius:6px;">
+                  {{ sku.error_code }}
+                </span>
+                {% else %}
+                <span style="color:#d1d5db;">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Error message (truncated, full on hover) -->
+              <td style="max-width:300px;">
+                {% if sku.error_msg %}
+                <span
+                  class="mono"
+                  style="font-size:.74rem; color:#6b7280; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:help;"
+                  title="{{ sku.error_msg }}"
+                >
+                  {{ sku.error_msg[:120] }}{% if sku.error_msg | length > 120 %}…{% endif %}
+                </span>
+                {% else %}
+                <span style="color:#d1d5db;">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Container -->
+              <td>
+                <span style="background:#f1f5f9; color:#475569; font-size:.75rem; padding:2px 8px; border-radius:6px; font-weight:500;">
+                  {{ sku.container_name or '—' }}
+                </span>
+              </td>
+
+              <!-- Blob count -->
+              <td style="text-align:center; font-weight:600;">{{ sku.blob_count or 0 }}</td>
+
+              <!-- Run ID -->
+              <td>
+                {% if sku.run_id %}
+                <span class="mono" style="font-size:.72rem; color:#94a3b8;" title="{{ sku.run_id }}">
+                  {{ sku.run_id[:8] }}…
+                </span>
+                {% else %}—{% endif %}
+              </td>
+
+              <!-- Timestamp -->
+              <td style="font-size:.78rem; color:#94a3b8; white-space:nowrap;">{{ sku.last_processed_at | fmt_dt }}</td>
+
+              <!-- Drill-in -->
+              <td>
+                <button
+                  class="btn-ghost"
+                  style="font-size:.75rem; padding:4px 12px;"
+                  onclick="loadDevSku('{{ sku.sku_id }}')"
+                >
+                  Detail →
+                </button>
+              </td>
+
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Reprocess hint -->
+    <div style="margin-top:16px; background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:16px 20px;">
+      <div style="font-weight:600; color:#92400e; margin-bottom:6px;">💡 How to reprocess failed SKUs</div>
+      <div style="font-size:.82rem; color:#a16207; margin-bottom:10px;">
+        Set <code style="background:#fef3c7; padding:1px 6px; border-radius:4px;">reprocess=true</code> in your CSV, then re-run the pipeline. Already-done SKUs are automatically skipped.
+      </div>
+      <pre style="background:#fff; border:1px solid #fde68a; border-radius:8px; padding:10px 14px; font-size:.75rem; color:#374151; font-family:monospace;">sku_id,container,reprocess
+FAILED_SKU_ID,,true</pre>
+    </div>
+
+    {% else %}
+    <div class="card" style="text-align:center; padding:64px;">
+      <div style="font-size:3rem; margin-bottom:12px;">🎉</div>
+      <div style="font-weight:600; color:#475569; margin-bottom:6px;">No failed SKUs</div>
+      <div style="font-size:.85rem; color:#94a3b8;">All processed SKUs completed successfully.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ══ TAB: SKU DETAIL ══════════════════════════════════════ -->
+  <div id="tab-skudetail" class="tab-panel">
+
+    <!-- Search form -->
+    <form method="get" action="/" style="display:flex; gap:10px; margin-bottom:28px;" onsubmit="localStorage.setItem('pipeline_view','dev')">
+      <input
+        name="dq"
+        value="{{ dq }}"
+        placeholder="Enter exact or partial SKU ID…"
+        style="flex:1; max-width:420px; border:2px solid #e2e8f0; border-radius:10px; padding:10px 16px; font-size:.88rem; outline:none; transition:border .15s;"
+        onfocus="this.style.borderColor='#6366f1'"
+        onblur="this.style.borderColor='#e2e8f0'"
+      />
+      <button type="submit" class="btn-primary" style="padding:10px 22px; border-radius:10px;">Inspect</button>
+    </form>
+
+    {% if dq and not dev_sku %}
+    <div class="card" style="text-align:center; padding:48px;">
+      <div style="font-size:2.5rem; margin-bottom:10px;">🔍</div>
+      <div style="font-weight:600; color:#475569;">No SKU found for "{{ dq }}"</div>
+      <div style="font-size:.82rem; color:#94a3b8; margin-top:6px;">Make sure the pipeline has processed this SKU.</div>
+    </div>
+
+    {% elif dev_sku %}
+    <!-- ── SKU Summary card ──────────────────────────────── -->
+    <div class="card" style="margin-bottom:20px;">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
+
+        <!-- Left: ID + status -->
+        <div>
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+            <span class="mono" style="font-size:1.15rem; font-weight:700; color:#1e293b;">{{ dev_sku.sku_id }}</span>
+            {{ dev_sku.status | status_badge }}
+          </div>
+          <div style="font-size:.8rem; color:#64748b; display:flex; flex-wrap:wrap; gap:16px;">
+            <span>📦 Container: <strong style="color:#374151;">{{ dev_sku.container_name or '—' }}</strong>
+              {% if dev_sku.container_source %}
+              <span style="color:#94a3b8;">({{ dev_sku.container_source }})</span>
+              {% endif %}
+            </span>
+            <span>🕐 Last processed: <strong style="color:#374151;">{{ dev_sku.last_processed_at | fmt_dt }}</strong></span>
+            {% if dev_sku.reprocessed_at %}
+            <span>🔁 Reprocessed: <strong style="color:#374151;">{{ dev_sku.reprocessed_at | fmt_dt }}</strong></span>
+            {% endif %}
+            <span>Run: <span class="mono" style="font-size:.75rem; color:#6366f1;" title="{{ dev_sku.run_id }}">{{ (dev_sku.run_id or '')[:8] }}…</span>
+              <button onclick="copyText('{{ dev_sku.run_id }}', this)" style="font-size:.65rem; padding:1px 6px; border-radius:4px; border:1px solid #e2e8f0; background:#f8fafc; color:#94a3b8; cursor:pointer;">copy</button>
+            </span>
+          </div>
+        </div>
+
+        <!-- Right: counters -->
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <div style="background:#f8fafc; border-radius:10px; padding:10px 16px; text-align:center; min-width:70px;">
+            <div style="font-size:1.5rem; font-weight:700; color:#374151;">{{ dev_sku.blob_count or 0 }}</div>
+            <div style="font-size:.7rem; color:#94a3b8;">Blobs found</div>
+          </div>
+          <div style="background:#ede9fe; border-radius:10px; padding:10px 16px; text-align:center; min-width:70px;">
+            <div style="font-size:1.5rem; font-weight:700; color:#7c3aed;">{{ dev_sku.cloudinary_sent or 0 }}</div>
+            <div style="font-size:.7rem; color:#a78bfa;">☁️ Cloudinary</div>
+          </div>
+          <div style="background:#e0f2fe; border-radius:10px; padding:10px 16px; text-align:center; min-width:70px;">
+            <div style="font-size:1.5rem; font-weight:700; color:#0369a1;">{{ dev_sku.cloudinary_skipped or 0 }}</div>
+            <div style="font-size:.7rem; color:#7dd3fc;">✂️ Pillow</div>
+          </div>
+          <div style="background:#dcfce7; border-radius:10px; padding:10px 16px; text-align:center; min-width:70px;">
+            <div style="font-size:1.5rem; font-weight:700; color:#16a34a;">{{ dev_sku.azure_uploaded or 0 }}</div>
+            <div style="font-size:.7rem; color:#4ade80;">✅ Uploaded</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Error banner -->
+      {% if dev_sku.error_code or dev_sku.error_msg %}
+      <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:12px 16px; font-size:.82rem;">
+        <span style="font-weight:700; color:#b91c1c;">Error:</span>
+        <span class="mono" style="color:#dc2626; margin-left:6px;">{{ dev_sku.error_code }}</span>
+        {% if dev_sku.error_msg %}
+        <div class="mono" style="color:#9f1239; margin-top:6px; font-size:.76rem; white-space:pre-wrap;">{{ dev_sku.error_msg }}</div>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ── Per-image table ───────────────────────────────── -->
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div style="padding:16px 20px; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; justify-content:space-between;">
+        <span style="font-weight:600; font-size:.9rem; color:#1e293b;">
+          🖼️ Image Results
+          <span style="font-size:.78rem; font-weight:400; color:#94a3b8; margin-left:6px;">({{ dev_images | length }} image{{ 's' if dev_images | length != 1 else '' }})</span>
+        </span>
+      </div>
+
+      {% if dev_images %}
+      <div class="overflow-x-auto">
+        <table class="tbl">
+          <thead>
+            <tr>
+              <th>Preview</th>
+              <th>Filename</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Error Code</th>
+              <th>Error Message</th>
+              <th>Processed At</th>
+              <th>Links</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for img in dev_images %}
+            <tr>
+
+              <!-- Thumbnail -->
+              <td style="width:54px;">
+                {% if img.preview_url %}
+                <img
+                  src="{{ img.preview_url }}"
+                  alt="{{ img.filename }}"
+                  loading="lazy"
+                  style="width:46px; height:60px; object-fit:cover; border-radius:6px; border:1px solid #e2e8f0;"
+                  onerror="this.style.display='none'"
+                />
+                {% else %}
+                <div style="width:46px; height:60px; border-radius:6px; background:#f1f5f9; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:1.2rem;">🖼️</div>
+                {% endif %}
+              </td>
+
+              <!-- Filename -->
+              <td>
+                <span class="mono" style="font-size:.78rem; color:#374151;">{{ img.filename }}</span>
+              </td>
+
+              <!-- Method -->
+              <td>{{ img.method | method_badge }}</td>
+
+              <!-- Status -->
+              <td>{{ img.status | status_badge }}</td>
+
+              <!-- Error code -->
+              <td>
+                {% if img.error_code %}
+                <span class="mono" style="font-size:.74rem; background:#fee2e2; color:#b91c1c; padding:2px 8px; border-radius:5px;">
+                  {{ img.error_code }}
+                </span>
+                {% else %}
+                <span style="color:#d1d5db;">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Error message -->
+              <td style="max-width:220px;">
+                {% if img.error_msg %}
+                <span class="mono" style="font-size:.73rem; color:#6b7280; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ img.error_msg }}">
+                  {{ img.error_msg[:100] }}{% if img.error_msg | length > 100 %}…{% endif %}
+                </span>
+                {% else %}
+                <span style="color:#d1d5db;">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Processed at -->
+              <td style="font-size:.75rem; color:#94a3b8; white-space:nowrap;">{{ img.processed_at | fmt_dt }}</td>
+
+              <!-- Links -->
+              <td>
+                <div style="display:flex; flex-direction:column; gap:3px;">
+                  {% if img.azure_url %}
+                  <a href="{{ img.azure_url }}" target="_blank" style="font-size:.72rem; color:#6366f1; text-decoration:none; white-space:nowrap;" title="{{ img.azure_url }}">
+                    ☁ Azure
+                  </a>
+                  {% endif %}
+                  {% if img.cloudinary_url %}
+                  <a href="{{ img.cloudinary_url }}" target="_blank" style="font-size:.72rem; color:#7c3aed; text-decoration:none; white-space:nowrap;" title="{{ img.cloudinary_url }}">
+                    🌤 Cloudinary
+                  </a>
+                  {% endif %}
+                </div>
+              </td>
+
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div style="padding:40px; text-align:center; color:#94a3b8; font-size:.85rem;">
+        No image records found for this SKU.
+      </div>
+      {% endif %}
+    </div>
+
+    {% else %}
+    <!-- Placeholder when no search yet -->
+    <div style="text-align:center; padding:64px 32px; color:#94a3b8;">
+      <div style="font-size:2.5rem; margin-bottom:12px;">🔬</div>
+      <div style="font-size:.9rem;">Enter a SKU ID above to inspect all technical details,<br>per-image processing methods, errors and links.</div>
+    </div>
+    {% endif %}
+
+  </div><!-- /tab-skudetail -->
+
+</div><!-- /dev-view -->
+
+
+<!-- ════════════════════════════════════════════════════════════
+     SCRIPTS
+     ════════════════════════════════════════════════════════════ -->
+<script>
+
+// ── Tab switching ─────────────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── Business image toggle (Processed ↔ Original) ──────────────
+function toggleImgMode(btn) {
+  const card      = btn.closest('.img-card');
+  const img       = card.querySelector('.biz-img');
+  const processed = img.dataset.processed;
+  const original  = img.dataset.original;
+  const mode      = img.dataset.mode;
+
+  if (mode === 'processed' && original) {
+    img.src         = original;
+    img.dataset.mode = 'original';
+    btn.textContent  = 'Show Processed';
+    btn.style.background = '#e0e7ff';
+    btn.style.borderColor = '#818cf8';
+    btn.style.color = '#4f46e5';
+  } else {
+    img.src         = processed;
+    img.dataset.mode = 'processed';
+    btn.textContent  = 'Show Original';
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    btn.style.color = '';
+  }
+}
+
+// ── Copy text to clipboard ────────────────────────────────────
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = '✓';
+    btn.style.color = '#10b981';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; }, 1500);
+  }).catch(() => {});
+}
+
+// ── Dev: expand run row via AJAX ──────────────────────────────
+const _expandedRuns = {};
+
+function toggleRunExpand(runId, btn) {
+  const row     = document.getElementById('expand-' + runId);
+  const content = document.getElementById('expand-content-' + runId);
+  const isOpen  = row.classList.contains('open');
+
+  if (isOpen) {
+    row.classList.remove('open');
+    btn.textContent = '▼ SKUs';
+    return;
+  }
+
+  row.classList.add('open');
+  btn.textContent = '▲ SKUs';
+
+  // Already loaded
+  if (_expandedRuns[runId]) return;
+  _expandedRuns[runId] = true;
+
+  fetch('/api/run/' + runId + '/skus')
+    .then(r => r.json())
+    .then(skus => {
+      if (!skus.length) {
+        content.innerHTML = '<p style="font-size:.8rem; color:#94a3b8;">No SKU records for this run.</p>';
+        return;
+      }
+
+      const statusColor = {
+        done:'#10b981', failed:'#ef4444', skipped:'#f59e0b',
+        pending:'#94a3b8', running:'#6366f1'
+      };
+
+      let html = `
+        <div style="margin-bottom:8px; font-size:.78rem; font-weight:600; color:#475569;">
+          ${skus.length} SKU${skus.length !== 1 ? 's' : ''} in this run
+        </div>
+        <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:.78rem;">
+          <thead>
+            <tr style="background:#f1f5f9;">
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem; letter-spacing:.04em;">SKU ID</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Status</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Worker</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Claimed</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Finished</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Duration</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Blobs</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Uploaded</th>
+              <th style="padding:7px 12px; text-align:left; color:#64748b; font-weight:600; text-transform:uppercase; font-size:.67rem;">Error</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      skus.forEach((s, i) => {
+        const color = statusColor[s.status] || '#94a3b8';
+        const dur   = s.duration_s != null
+          ? (s.duration_s < 60 ? s.duration_s + 's' : Math.floor(s.duration_s/60) + 'm ' + (s.duration_s%60) + 's')
+          : '—';
+        const rowBg = i % 2 === 0 ? '#fff' : '#f8fafc';
+        html += `
+          <tr style="background:${rowBg}; border-top:1px solid #f1f5f9;">
+            <td style="padding:7px 12px; font-family:monospace; font-weight:600; color:#1e293b;">${s.sku_id}</td>
+            <td style="padding:7px 12px;">
+              <span style="color:${color}; font-weight:600;">${s.status}</span>
+            </td>
+            <td style="padding:7px 12px; color:#64748b; font-family:monospace; font-size:.72rem;">${s.worker_id || '—'}</td>
+            <td style="padding:7px 12px; color:#94a3b8; white-space:nowrap; font-size:.72rem;">${s.claimed_at || '—'}</td>
+            <td style="padding:7px 12px; color:#94a3b8; white-space:nowrap; font-size:.72rem;">${s.finished_at || '—'}</td>
+            <td style="padding:7px 12px; color:#64748b; font-size:.74rem;">${dur}</td>
+            <td style="padding:7px 12px; font-weight:600;">${s.blob_count ?? '—'}</td>
+            <td style="padding:7px 12px; font-weight:600; color:#10b981;">${s.azure_uploaded ?? '—'}</td>
+            <td style="padding:7px 12px; max-width:200px;">
+              ${s.error_code
+                ? `<span style="font-family:monospace; font-size:.7rem; background:#fee2e2; color:#b91c1c; padding:1px 7px; border-radius:5px;" title="${s.error_msg || ''}">${s.error_code}</span>`
+                : '<span style="color:#d1d5db;">—</span>'
+              }
+            </td>
+          </tr>
+        `;
+      });
+
+      html += '</tbody></table></div>';
+      content.innerHTML = html;
+    })
+    .catch(() => {
+      content.innerHTML = '<p style="font-size:.8rem; color:#ef4444;">Failed to load SKU data.</p>';
+    });
+}
+
+// ── Dev: load SKU detail from Failed tab ──────────────────────
+function loadDevSku(skuId) {
+  // Switch to SKU Detail tab
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-skudetail').classList.add('active');
+  document.querySelectorAll('.tab-btn')[2].classList.add('active');
+
+  // Navigate to /?dq=skuId (keeps dev view)
+  localStorage.setItem('pipeline_view', 'dev');
+  window.location.href = '/?dq=' + encodeURIComponent(skuId);
+}
+
+</script>
+
+{% endblock %}
