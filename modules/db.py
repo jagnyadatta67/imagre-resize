@@ -163,23 +163,33 @@ def init_db() -> None:
     # ── Per-image audit trail ─────────────────────────────────
     cur.execute("""
         CREATE TABLE IF NOT EXISTS image_results (
-            id              INT AUTO_INCREMENT PRIMARY KEY,
-            run_id          VARCHAR(36)  NOT NULL,
-            sku_id          VARCHAR(200) NOT NULL,
-            blob_name       VARCHAR(500),
-            filename        VARCHAR(300),
-            method          VARCHAR(20),
-            cloudinary_url  TEXT,
-            azure_url       TEXT,
-            status          VARCHAR(20),
-            error_code      VARCHAR(100),
-            error_msg       TEXT,
-            processed_at    DATETIME,
+            id               INT AUTO_INCREMENT PRIMARY KEY,
+            run_id           VARCHAR(36)  NOT NULL,
+            sku_id           VARCHAR(200) NOT NULL,
+            blob_name        VARCHAR(500),
+            filename         VARCHAR(300),
+            method           VARCHAR(20),
+            cloudinary_url   TEXT,
+            azure_url        TEXT,
+            status           VARCHAR(20),
+            error_code       VARCHAR(100),
+            error_msg        TEXT,
+            processed_at     DATETIME,
+            reprocess_count  INT          DEFAULT 0,
             INDEX idx_sku_id (sku_id),
             INDEX idx_run_id (run_id),
             INDEX idx_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
+    # Add reprocess_count to existing tables (migration)
+    try:
+        cur.execute("ALTER TABLE image_results ADD COLUMN reprocess_count INT DEFAULT 0")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass   # column already exists — safe to ignore
+        else:
+            raise
 
     conn.commit()
     cur.close()
@@ -344,6 +354,25 @@ def get_sku_status(sku_id: str) -> Optional[dict]:
     cur.close()
     conn.close()
     return row
+
+
+def get_sku_container(sku_id: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    Return (container_name, container_source) for a SKU from sku_results.
+    Returns (None, None) if the SKU has no DB record.
+    """
+    conn = _conn()
+    cur  = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT container_name, container_source FROM sku_results WHERE sku_id = %s",
+        (sku_id,)
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if row:
+        return row["container_name"], row["container_source"]
+    return None, None
 
 
 def upsert_sku_result(

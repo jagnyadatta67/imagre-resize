@@ -375,8 +375,8 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=BULK_WORKERS,
         help=f"Parallel worker threads (default: {BULK_WORKERS})")
     parser.add_argument("--pad-mode", default="auto",
-        choices=["auto", "white", "gen_fill"],
-        help="Cloudinary background fill for pad operations (default: auto)")
+        choices=["auto", "white", "gen_fill", "no"],
+        help="Cloudinary bg mode: auto|white|gen_fill=pad with bg, no=crop=fill (default: auto)")
     parser.add_argument("--dry-run", action="store_true",
         help="Detect containers + list blobs only — no conversion or upload")
     args = parser.parse_args()

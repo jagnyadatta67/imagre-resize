@@ -125,19 +125,34 @@
             {% endif %}
           </div>
 
-          <!-- Filename + toggle -->
+          <!-- Filename + toggle + reprocess -->
           <div style="padding:8px 10px;">
             <p style="font-size:.7rem; color:#94a3b8; font-family:monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:6px;" title="{{ img.filename }}">
               {{ img.filename }}
             </p>
             {% if img.has_original %}
-            <div style="display:flex; gap:4px;">
+            <div style="display:flex; gap:4px; margin-bottom:5px;">
               <button class="img-tab-btn" onclick="setImgMode(this,'original')"  data-tab="original">Original</button>
               <button class="img-tab-btn active" onclick="setImgMode(this,'processed')" data-tab="processed">Processed</button>
             </div>
             {% else %}
-            <span style="font-size:.68rem; color:#d1d5db;">No original available</span>
+            <div style="margin-bottom:5px;">
+              <span style="font-size:.68rem; color:#d1d5db;">No original available</span>
+            </div>
             {% endif %}
+            <!-- Reprocess button -->
+            <button
+              data-sku="{{ sku.sku_id }}"
+              data-filename="{{ img.filename }}"
+              onclick="openReprocessModal(this)"
+              style="width:100%; font-size:.68rem; padding:4px 0; border-radius:6px;
+                     border:1px solid #e2e8f0; background:#f8fafc; color:#64748b;
+                     cursor:pointer; transition:all .15s; font-weight:500;"
+              onmouseover="this.style.background='#ede9fe';this.style.color='#7c3aed';this.style.borderColor='#c4b5fd';"
+              onmouseout="this.style.background='#f8fafc';this.style.color='#64748b';this.style.borderColor='#e2e8f0';"
+            >
+              🔄 Reprocess
+            </button>
           </div>
 
         </div>
@@ -643,6 +658,95 @@ FAILED_SKU_ID,,true</pre>
 
 
 <!-- ════════════════════════════════════════════════════════════
+     REPROCESS MODAL
+     ════════════════════════════════════════════════════════════ -->
+<div id="rp-overlay" onclick="closeReprocessModal()" style="
+  display:none; position:fixed; inset:0; z-index:10000;
+  background:rgba(0,0,0,0.62); align-items:center; justify-content:center;">
+
+  <div onclick="event.stopPropagation()" style="
+    background:#fff; border-radius:18px; padding:28px 30px;
+    width:100%; max-width:440px; margin:16px;
+    box-shadow:0 24px 80px rgba(0,0,0,0.32);">
+
+    <!-- Header -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+      <div>
+        <div style="font-size:1rem; font-weight:700; color:#1e293b; margin-bottom:4px;">🔄 Reprocess Image</div>
+        <div id="rp-filename-label" style="font-size:.72rem; font-family:monospace; color:#6366f1; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+      </div>
+      <button onclick="closeReprocessModal()" style="background:none; border:none; font-size:1.4rem; color:#94a3b8; cursor:pointer; line-height:1; padding:0; margin-left:12px;" title="Close">✕</button>
+    </div>
+
+    <!-- Method selector -->
+    <div style="margin-bottom:20px;">
+      <div style="font-size:.78rem; font-weight:600; color:#475569; margin-bottom:10px;">Choose processing method:</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+
+        <div id="rp-btn-gen_fill" onclick="selectRpMethod('gen_fill')" style="
+          border:2px solid #e2e8f0; border-radius:10px; padding:11px 12px;
+          cursor:pointer; background:#f8fafc; transition:all .15s;"
+          onmouseover="if(rpMethod!='gen_fill'){this.style.borderColor='#c4b5fd';this.style.background='#f5f3ff';}"
+          onmouseout="if(rpMethod!='gen_fill'){this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';}">
+          <div style="font-weight:600; font-size:.82rem; color:#1e293b;">✨ Gen Fill</div>
+          <div style="font-size:.7rem; color:#64748b; margin-top:2px;">AI-generated background</div>
+        </div>
+
+        <div id="rp-btn-auto" onclick="selectRpMethod('auto')" style="
+          border:2px solid #6366f1; border-radius:10px; padding:11px 12px;
+          cursor:pointer; background:#ede9fe; transition:all .15s;"
+          onmouseover="if(rpMethod!='auto'){this.style.borderColor='#c4b5fd';this.style.background='#f5f3ff';}"
+          onmouseout="if(rpMethod!='auto'){this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';}">
+          <div style="font-weight:600; font-size:.82rem; color:#1e293b;">🎨 Auto</div>
+          <div style="font-size:.7rem; color:#64748b; margin-top:2px;">Edge-colour background</div>
+        </div>
+
+        <div id="rp-btn-fill" onclick="selectRpMethod('fill')" style="
+          border:2px solid #e2e8f0; border-radius:10px; padding:11px 12px;
+          cursor:pointer; background:#f8fafc; transition:all .15s;"
+          onmouseover="if(rpMethod!='fill'){this.style.borderColor='#c4b5fd';this.style.background='#f5f3ff';}"
+          onmouseout="if(rpMethod!='fill'){this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';}">
+          <div style="font-weight:600; font-size:.82rem; color:#1e293b;">✂️ Crop Fill</div>
+          <div style="font-size:.7rem; color:#64748b; margin-top:2px;">Smart crop, no padding</div>
+        </div>
+
+        <div id="rp-btn-pillow" onclick="selectRpMethod('pillow')" style="
+          border:2px solid #e2e8f0; border-radius:10px; padding:11px 12px;
+          cursor:pointer; background:#f8fafc; transition:all .15s;"
+          onmouseover="if(rpMethod!='pillow'){this.style.borderColor='#c4b5fd';this.style.background='#f5f3ff';}"
+          onmouseout="if(rpMethod!='pillow'){this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';}">
+          <div style="font-weight:600; font-size:.82rem; color:#1e293b;">🖼️ Pillow</div>
+          <div style="font-size:.7rem; color:#64748b; margin-top:2px;">Local centre crop (free)</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <button id="rp-submit" onclick="submitReprocess()" style="
+      width:100%; padding:13px; border-radius:10px; border:none;
+      background:#6366f1; color:#fff; font-size:.9rem; font-weight:600;
+      cursor:pointer; transition:opacity .15s;">
+      Start Reprocess
+    </button>
+
+    <!-- Processing status -->
+    <div id="rp-status" style="display:none; margin-top:14px; text-align:center;">
+      <div style="font-size:1.4rem; margin-bottom:6px;">⏳</div>
+      <div style="font-size:.83rem; color:#64748b;">Downloading & reprocessing image…</div>
+      <div style="font-size:.75rem; color:#94a3b8; margin-top:3px;">This may take a few seconds.</div>
+    </div>
+
+    <!-- Result -->
+    <div id="rp-result" style="display:none; margin-top:14px;">
+      <div id="rp-result-inner"></div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
      LIGHTBOX
      ════════════════════════════════════════════════════════════ -->
 <div id="biz-lightbox" onclick="closeLightbox()" style="
@@ -832,8 +936,16 @@ function lbSetMode(mode) {
   }
 }
 
-// ESC to close lightbox
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+// ESC — close whichever modal is visible (reprocess takes priority)
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (document.getElementById('rp-overlay').style.display !== 'none') {
+      closeReprocessModal();
+    } else {
+      closeLightbox();
+    }
+  }
+});
 
 // ── Copy text to clipboard ────────────────────────────────────
 function copyText(text, btn) {
@@ -948,6 +1060,140 @@ function loadDevSku(skuId) {
   // Navigate to /?dq=skuId (keeps dev view)
   localStorage.setItem('pipeline_view', 'dev');
   window.location.href = '/?dq=' + encodeURIComponent(skuId);
+}
+
+
+// ════════════════════════════════════════════════════════════
+// REPROCESS MODAL
+// ════════════════════════════════════════════════════════════
+
+let rpSku      = '';
+let rpFilename = '';
+let rpMethod   = 'auto';
+let rpCardImg  = null;   // the <img class="biz-img"> inside the card
+
+const _rpMethods = ['gen_fill', 'auto', 'fill', 'pillow'];
+
+function selectRpMethod(m) {
+  rpMethod = m;
+  _rpMethods.forEach(k => {
+    const el = document.getElementById('rp-btn-' + k);
+    if (!el) return;
+    if (k === m) {
+      el.style.borderColor = '#6366f1';
+      el.style.background  = '#ede9fe';
+    } else {
+      el.style.borderColor = '#e2e8f0';
+      el.style.background  = '#f8fafc';
+    }
+  });
+}
+
+function openReprocessModal(btn) {
+  rpSku      = btn.dataset.sku      || '';
+  rpFilename = btn.dataset.filename || '';
+  rpCardImg  = btn.closest('.img-card') ? btn.closest('.img-card').querySelector('.biz-img') : null;
+
+  // Reset to default method
+  rpMethod = 'auto';
+  selectRpMethod('auto');
+
+  document.getElementById('rp-filename-label').textContent = rpFilename;
+  document.getElementById('rp-status').style.display  = 'none';
+  document.getElementById('rp-result').style.display  = 'none';
+
+  const submitBtn = document.getElementById('rp-submit');
+  submitBtn.disabled    = false;
+  submitBtn.style.opacity = '1';
+  submitBtn.textContent = 'Start Reprocess';
+
+  document.getElementById('rp-overlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeReprocessModal() {
+  document.getElementById('rp-overlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function submitReprocess() {
+  const submitBtn = document.getElementById('rp-submit');
+  submitBtn.disabled    = true;
+  submitBtn.style.opacity = '0.55';
+  submitBtn.textContent   = 'Processing…';
+
+  document.getElementById('rp-status').style.display = 'block';
+  document.getElementById('rp-result').style.display = 'none';
+
+  fetch('/api/reprocess-image', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ sku_id: rpSku, filename: rpFilename, method: rpMethod }),
+  })
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById('rp-status').style.display = 'none';
+    document.getElementById('rp-result').style.display = 'block';
+    const inner = document.getElementById('rp-result-inner');
+
+    if (data.ok) {
+      const cfLabel = data.used_cloudinary ? '☁️ Cloudinary' : '✂️ Pillow';
+      inner.innerHTML = `
+        <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px;">
+          <div style="font-weight:700; color:#16a34a; margin-bottom:6px;">✅ Reprocess complete!</div>
+          <div style="font-size:.78rem; color:#15803d; margin-bottom:10px;">
+            Method: <strong>${data.method}</strong> &nbsp;·&nbsp; ${cfLabel}
+          </div>
+          <a href="${data.new_url}" target="_blank" rel="noopener"
+             style="display:inline-block; font-size:.75rem; color:#6366f1; text-decoration:none;
+                    background:#ede9fe; padding:5px 14px; border-radius:6px;">
+            🔗 View new image
+          </a>
+        </div>`;
+
+      // Immediately refresh the card thumbnail using the versioned CF URL (?v=N)
+      // new_url already contains ?v={reprocess_count} — forces CF to fetch fresh
+      if (rpCardImg && data.new_url) {
+        rpCardImg.src = data.new_url;
+        rpCardImg.dataset.processed = data.new_url;
+        rpCardImg.dataset.mode      = 'processed';
+        // Sync toggle buttons in the card
+        const card = rpCardImg.closest('.img-card');
+        if (card) {
+          card.querySelectorAll('.img-tab-btn').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === 'processed');
+          });
+        }
+      }
+
+      submitBtn.disabled    = false;
+      submitBtn.style.opacity = '1';
+      submitBtn.textContent   = 'Reprocess Again';
+    } else {
+      inner.innerHTML = `
+        <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px;">
+          <div style="font-weight:700; color:#b91c1c; margin-bottom:6px;">❌ Reprocess failed</div>
+          <div style="font-size:.77rem; color:#7f1d1d; font-family:monospace; white-space:pre-wrap; word-break:break-word;">
+            ${data.error || 'Unknown error'}
+          </div>
+        </div>`;
+      submitBtn.disabled    = false;
+      submitBtn.style.opacity = '1';
+      submitBtn.textContent   = 'Try Again';
+    }
+  })
+  .catch(err => {
+    document.getElementById('rp-status').style.display = 'none';
+    document.getElementById('rp-result').style.display = 'block';
+    document.getElementById('rp-result-inner').innerHTML = `
+      <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px;">
+        <div style="font-weight:700; color:#b91c1c; margin-bottom:4px;">❌ Network error</div>
+        <div style="font-size:.77rem; color:#7f1d1d; font-family:monospace;">${err}</div>
+      </div>`;
+    submitBtn.disabled    = false;
+    submitBtn.style.opacity = '1';
+    submitBtn.textContent   = 'Try Again';
+  });
 }
 
 </script>

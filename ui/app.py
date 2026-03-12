@@ -18,7 +18,9 @@ Routes
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sys
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -32,6 +34,16 @@ from markupsafe import Markup
 # ── Load .env from parent directory ──────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+# ── Module imports (pipeline modules live in BASE_DIR) ────────
+# Must come AFTER load_dotenv so env vars are available at import time
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+from modules.azure_client import AzureClient                     # noqa: E402
+from modules.converter import reprocess_single_image             # noqa: E402
+
+_azure = AzureClient()   # singleton — thread-safe per Azure SDK docs
 
 MYSQL_HOST     = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT     = int(os.getenv("MYSQL_PORT", "3306"))
@@ -281,7 +293,7 @@ def _build_business_results(cur, query: str) -> list:
     results = []
     for sku in skus:
         cur.execute("""
-            SELECT filename, azure_url, status
+            SELECT filename, azure_url, status, reprocess_count
             FROM   image_results
             WHERE  sku_id = %s
             ORDER  BY processed_at DESC
@@ -297,8 +309,13 @@ def _build_business_results(cur, query: str) -> list:
             if fname and fname not in seen:
                 seen.add(fname)
 
-                # CF CDN URL — plain, no resizing; falls back to Azure SAS if unmapped
+                # CF CDN URL — append ?v=N when image has been reprocessed
+                # so CF treats each reprocess as a distinct cache entry
+                rcount        = img.get("reprocess_count") or 0
                 processed_url = make_cf_url(azure_url) or make_sas_url(azure_url)
+                if rcount > 0:
+                    sep           = "&" if "?" in processed_url else "?"
+                    processed_url = f"{processed_url}{sep}v={rcount}"
                 original_url  = make_cf_original_url(azure_url) or make_original_sas_url(azure_url)
 
                 images.append({
@@ -519,6 +536,132 @@ def sku_list():
         status      = status,
         q           = q,
     )
+
+
+# ── Per-image manual reprocess ────────────────────────────────
+
+@app.route("/api/reprocess-image", methods=["POST"])
+def api_reprocess_image():
+    """
+    Manually reprocess one image without Vision AI.
+
+    POST JSON body:
+      { "sku_id": "...", "filename": "...", "method": "gen_fill|auto|fill|pillow" }
+
+    Flow:
+      1. Look up container_name from sku_results
+      2. Download original from {container}/lifestyle/{filename}
+      3. Apply chosen method (Cloudinary PAD/FILL or Pillow)
+      4. Upload result to {container}/lifestyle-newc/{filename}
+      5. Insert audit row into image_results
+      6. Return { ok, new_url, method, used_cloudinary }
+    """
+    data     = request.get_json(force=True) or {}
+    sku_id   = (data.get("sku_id")   or "").strip()
+    filename = (data.get("filename") or "").strip()
+    method   = (data.get("method")   or "auto").strip()
+
+    if not sku_id or not filename:
+        return jsonify({"ok": False, "error": "sku_id and filename are required"}), 400
+    if method not in {"gen_fill", "auto", "fill", "pillow"}:
+        return jsonify({"ok": False, "error": "method must be gen_fill, auto, fill, or pillow"}), 400
+
+    # ── 1. Fetch container from DB ────────────────────────────
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT container_name FROM sku_results WHERE sku_id = %s",
+            (sku_id,)
+        )
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        db.close()
+
+    if not row or not row.get("container_name"):
+        return jsonify({"ok": False, "error": f"No DB record for SKU '{sku_id}'"}), 404
+
+    container_name = row["container_name"]
+    logger = logging.getLogger(f"reprocess.{sku_id[:30]}")
+
+    try:
+        # ── 2. Download original ──────────────────────────────
+        blob_name   = f"lifestyle/{filename}"
+        image_bytes = _azure.download_blob_bytes(container_name, blob_name)
+
+        # ── 3. Reprocess (no Vision AI) ───────────────────────
+        output_bytes, used_cloudinary, cloudinary_url = reprocess_single_image(
+            image_bytes, filename, sku_id, method, logger
+        )
+
+        # ── 4. Upload result to lifestyle-newc/ ───────────────
+        azure_url = _azure.upload_to_newc(filename, output_bytes, container_name)
+
+        # ── 5. Save audit row (with incremented reprocess_count) ─
+        db2  = get_db()
+        cur2 = db2.cursor(dictionary=True)
+        try:
+            # Get current max reprocess_count for this image
+            cur2.execute("""
+                SELECT COALESCE(MAX(reprocess_count), 0) AS max_count
+                FROM   image_results
+                WHERE  sku_id = %s AND filename = %s
+            """, (sku_id, filename))
+            max_row       = cur2.fetchone()
+            reprocess_count = (max_row["max_count"] or 0) + 1
+
+            cur2.execute("""
+                INSERT INTO image_results
+                    (run_id, sku_id, blob_name, filename, method,
+                     cloudinary_url, azure_url, status, processed_at,
+                     reprocess_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'done', %s, %s)
+            """, (
+                "manual-reprocess", sku_id, blob_name, filename,
+                f"reprocess_{method}", cloudinary_url, azure_url, datetime.now(),
+                reprocess_count,
+            ))
+        finally:
+            cur2.close()
+            db2.close()
+
+        # ── 6. Build CF URL with version param to bust cache ─────
+        base_url = make_cf_url(azure_url) or make_sas_url(azure_url)
+        sep      = "&" if "?" in base_url else "?"
+        new_url  = f"{base_url}{sep}v={reprocess_count}"
+        return jsonify({
+            "ok":              True,
+            "method":          method,
+            "used_cloudinary": used_cloudinary,
+            "azure_url":       azure_url,
+            "new_url":         new_url,          # versioned CF URL for card refresh
+            "reprocess_count": reprocess_count,  # ?v=N for CF cache busting
+        })
+
+    except Exception as exc:
+        logger.exception(f"Reprocess failed  sku={sku_id}  file={filename}")
+        # Save failure audit row (best-effort)
+        try:
+            db3  = get_db()
+            cur3 = db3.cursor()
+            try:
+                cur3.execute("""
+                    INSERT INTO image_results
+                        (run_id, sku_id, blob_name, filename, method,
+                         status, error_code, error_msg, processed_at)
+                    VALUES (%s, %s, %s, %s, %s, 'failed', %s, %s, %s)
+                """, (
+                    "manual-reprocess", sku_id, f"lifestyle/{filename}", filename,
+                    f"reprocess_{method}", type(exc).__name__, str(exc)[:2000],
+                    datetime.now(),
+                ))
+            finally:
+                cur3.close()
+                db3.close()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 # ── Legacy redirect ───────────────────────────────────────────

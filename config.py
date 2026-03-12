@@ -32,7 +32,7 @@ TEXT_THRESHOLD      = int(os.getenv("TEXT_THRESHOLD", "40"))
 # ── Pipeline behaviour ────────────────────────────────────────
 BULK_WORKERS        = int(os.getenv("BULK_WORKERS", "10"))
 FULL_AI             = os.getenv("FULL_AI", "false").lower() == "true"
-VERBOSE_LOG         = os.getenv("VERBOSE_LOG", "false").lower() == "true"
+VERBOSE_LOG         = os.getenv("VERBOSE_LOG", "true").lower() == "true"
 
 # ── Unbxd container detection ─────────────────────────────────
 UNBXD_URL = (

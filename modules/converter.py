@@ -81,22 +81,85 @@ def convert_image_bytes(
     used_cloudinary : True if a Cloudinary API call was made
     cloudinary_url  : Cloudinary CDN URL (None when Pillow path used)
     """
+    # ── Single Vision API call for both text + object detection ──
+    texts, objects = _vision_analyze(image_bytes, logger)
+
     # ── Step 1: text-heavy check ─────────────────────────────
-    if _is_text_heavy(image_bytes, logger):
+    if _is_text_heavy(texts, logger):
         logger.info(f"[{filename}] text-heavy → Cloudinary pad  bg={pad_mode}")
         return _cloudinary_pad(image_bytes, sku_id, filename, logger, pad_mode)
 
     # ── Step 2: smart crop / AI reframe ──────────────────────
-    return _smart_crop_or_ai(image_bytes, sku_id, filename, logger, pad_mode)
+    return _smart_crop_or_ai(image_bytes, sku_id, filename, logger, pad_mode, objects)
+
+
+def reprocess_single_image(
+    image_bytes: bytes,
+    filename:    str,
+    sku_id:      str,
+    method:      str,
+    logger:      logging.Logger,
+) -> tuple[bytes, bool, Optional[str]]:
+    """
+    Reprocess a single image WITHOUT Vision AI.
+    Called from the Flask UI for manual per-image reprocessing.
+
+    Parameters
+    ----------
+    method : 'gen_fill' | 'auto' | 'fill' | 'pillow'
+        gen_fill  → Cloudinary PAD with AI-generated background
+        auto      → Cloudinary PAD with edge-colour background
+        fill      → Cloudinary FILL (smart crop, no padding)
+        pillow    → Local Pillow centre-crop (free, no external API)
+
+    Returns
+    -------
+    (output_bytes, used_cloudinary, cloudinary_url)
+    """
+    if method == "pillow":
+        logger.info(f"[{filename}] manual reprocess → Pillow centre crop")
+        img = Image.open(io.BytesIO(image_bytes))
+        return _pil_center_crop(img), False, None
+
+    if method == "fill":
+        # Cloudinary FILL — smart auto-gravity, no background padding
+        transformation = [{"width": TARGET_W, "height": TARGET_H,
+                           "crop": "fill", "gravity": "auto"}]
+        logger.info(f"[{filename}] manual reprocess → Cloudinary FILL")
+        return _cloudinary_upload_and_fetch(
+            image_bytes, sku_id, filename, transformation, logger
+        )
+
+    # gen_fill or auto → Cloudinary PAD with the chosen background
+    logger.info(f"[{filename}] manual reprocess → Cloudinary PAD bg={method}")
+    return _cloudinary_pad(image_bytes, sku_id, filename, logger, pad_mode=method)
+
+
+# ============================================================
+# GOOGLE VISION — COMBINED SINGLE CALL
+# ============================================================
+
+def _vision_analyze(image_bytes: bytes, logger: logging.Logger):
+    """
+    Single Vision API call requesting both TEXT_DETECTION and
+    OBJECT_LOCALIZATION. Returns (text_annotations, localized_object_annotations).
+    """
+    request = vision.AnnotateImageRequest(
+        image    = vision.Image(content=image_bytes),
+        features = [
+            vision.Feature(type_=vision.Feature.Type.TEXT_DETECTION),
+            vision.Feature(type_=vision.Feature.Type.OBJECT_LOCALIZATION),
+        ],
+    )
+    response = _vision_client.annotate_image(request)
+    return response.text_annotations, response.localized_object_annotations
 
 
 # ============================================================
 # GOOGLE VISION — TEXT DETECTION
 # ============================================================
 
-def _is_text_heavy(image_bytes: bytes, logger: logging.Logger) -> bool:
-    response = _vision_client.text_detection(vision.Image(content=image_bytes))
-    texts    = response.text_annotations
+def _is_text_heavy(texts, logger: logging.Logger) -> bool:
     if not texts:
         return False
     char_count = len(texts[0].description.strip())
@@ -108,16 +171,13 @@ def _is_text_heavy(image_bytes: bytes, logger: logging.Logger) -> bool:
 # GOOGLE VISION — OBJECT DETECTION
 # ============================================================
 
-def _detect_bbox(image_bytes: bytes, logger: logging.Logger) -> Optional[tuple]:
+def _detect_bbox(objects, logger: logging.Logger) -> Optional[tuple]:
     """
     Returns merged normalised bounding box (x_min, y_min, x_max, y_max)
     for the highest-priority detected object, or None if nothing found.
 
     Priority: Person > Footwear > Clothing > largest object (fallback)
     """
-    response = _vision_client.object_localization(vision.Image(content=image_bytes))
-    objects  = response.localized_object_annotations
-
     logger.debug(f"Vision objects={len(objects)}")
     if not objects:
         logger.warning("Vision: no objects detected")
@@ -180,11 +240,12 @@ def _smart_crop_or_ai(
     filename:    str,
     logger:      logging.Logger,
     pad_mode:    str,
+    objects,
 ) -> tuple[bytes, bool, Optional[str]]:
 
     img      = Image.open(io.BytesIO(image_bytes))
     img_w, img_h = img.size
-    bbox     = _detect_bbox(image_bytes, logger)
+    bbox     = _detect_bbox(objects, logger)
 
     # Force all through Cloudinary if FULL_AI=true
     if FULL_AI:
@@ -240,6 +301,13 @@ def _cloudinary_reframe(
             transformation = [{"width": TARGET_W, "height": TARGET_H,
                                "crop": "fill", "gravity": "auto"}]
             logger.info(f"[{filename}] Cloudinary FILL (head tight, y_min={y_min_norm:.3f})")
+        elif pad_mode == "no":
+            # --pad-mode no: always fill, no background padding
+            transformation = [
+                {"width": TARGET_W, "height": TARGET_H, "crop": "fill", "gravity": "auto"},
+                {"quality": "auto", "fetch_format": "auto"},
+            ]
+            logger.info(f"[{filename}] Cloudinary FILL  y_min={y_min_norm:.3f}")
         else:
             transformation = [{"width": TARGET_W, "height": TARGET_H,
                                "crop": "pad",  "gravity": "center",
@@ -256,6 +324,7 @@ def _cloudinary_pad(
     logger:      logging.Logger,
     pad_mode:    str,
 ) -> tuple[bytes, bool, str]:
+    # Text-heavy images always use PAD regardless of --pad-mode
     bg = _pad_bg(pad_mode)
     transformation = [{"width": TARGET_W, "height": TARGET_H,
                        "crop": "pad", "gravity": "center",
