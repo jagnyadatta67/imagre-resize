@@ -292,6 +292,7 @@ def _build_business_results(cur, query: str) -> list:
 
     results = []
     for sku in skus:
+        # ── latest row per filename (for azure_url / status) ──────────────
         cur.execute("""
             SELECT filename, azure_url, status, reprocess_count
             FROM   image_results
@@ -299,6 +300,19 @@ def _build_business_results(cur, query: str) -> list:
             ORDER  BY processed_at DESC
         """, (sku["sku_id"],))
         all_imgs = cur.fetchall()
+
+        # ── MAX(reprocess_count) per filename ─────────────────────────────
+        # Pipeline re-runs insert new rows with reprocess_count=0, which would
+        # overwrite the version param. Fetching the MAX separately ensures the
+        # highest version is always used for CF cache-busting, regardless of
+        # which row is latest.
+        cur.execute("""
+            SELECT filename, COALESCE(MAX(reprocess_count), 0) AS max_rc
+            FROM   image_results
+            WHERE  sku_id = %s
+            GROUP  BY filename
+        """, (sku["sku_id"],))
+        max_rc_map = {r["filename"]: (r["max_rc"] or 0) for r in cur.fetchall()}
 
         # Deduplicate: keep the latest row per filename
         seen   = set()
@@ -309,9 +323,9 @@ def _build_business_results(cur, query: str) -> list:
             if fname and fname not in seen:
                 seen.add(fname)
 
-                # CF CDN URL — append ?v=N when image has been reprocessed
-                # so CF treats each reprocess as a distinct cache entry
-                rcount        = img.get("reprocess_count") or 0
+                # CF CDN URL — always use MAX(reprocess_count) across all rows
+                # so that pipeline re-runs don't reset the cache-busting param
+                rcount        = max_rc_map.get(fname, 0)
                 processed_url = make_cf_url(azure_url) or make_sas_url(azure_url)
                 if rcount > 0:
                     sep           = "&" if "?" in processed_url else "?"
