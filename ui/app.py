@@ -616,13 +616,14 @@ def api_reprocess_image():
         db2  = get_db()
         cur2 = db2.cursor(dictionary=True)
         try:
-            # Get current max reprocess_count for this image
+            # Get MAX reprocess_count across entire SKU (not just this file)
+            # so all images in the SKU stay on the same version number.
             cur2.execute("""
                 SELECT COALESCE(MAX(reprocess_count), 0) AS max_count
                 FROM   image_results
-                WHERE  sku_id = %s AND filename = %s
-            """, (sku_id, filename))
-            max_row       = cur2.fetchone()
+                WHERE  sku_id = %s
+            """, (sku_id,))
+            max_row         = cur2.fetchone()
             reprocess_count = (max_row["max_count"] or 0) + 1
 
             cur2.execute("""
@@ -636,6 +637,13 @@ def api_reprocess_image():
                 f"reprocess_{method}", cloudinary_url, azure_url, datetime.now(),
                 reprocess_count,
             ))
+
+            # Sync all rows for this SKU to the same reprocess_count
+            cur2.execute("""
+                UPDATE image_results
+                SET    reprocess_count = %s
+                WHERE  sku_id = %s
+            """, (reprocess_count, sku_id))
         finally:
             cur2.close()
             db2.close()

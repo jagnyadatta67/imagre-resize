@@ -176,20 +176,27 @@ def init_db() -> None:
             error_msg        TEXT,
             processed_at     DATETIME,
             reprocess_count  INT          DEFAULT 0,
+            vision_data      VARCHAR(500),
+            transform_data   VARCHAR(500),
             INDEX idx_sku_id (sku_id),
             INDEX idx_run_id (run_id),
             INDEX idx_status (status)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     """)
-    # Add reprocess_count to existing tables (migration)
-    try:
-        cur.execute("ALTER TABLE image_results ADD COLUMN reprocess_count INT DEFAULT 0")
-        conn.commit()
-    except Exception as e:
-        if "1060" in str(e) or "Duplicate column" in str(e):
-            pass   # column already exists — safe to ignore
-        else:
-            raise
+    # Migrations — safe to run on existing tables
+    for col_sql in [
+        "ALTER TABLE image_results ADD COLUMN reprocess_count INT DEFAULT 0",
+        "ALTER TABLE image_results ADD COLUMN vision_data VARCHAR(500)",
+        "ALTER TABLE image_results ADD COLUMN transform_data VARCHAR(500)",
+    ]:
+        try:
+            cur.execute(col_sql)
+            conn.commit()
+        except Exception as e:
+            if "1060" in str(e) or "Duplicate column" in str(e):
+                pass   # column already exists — safe to ignore
+            else:
+                raise
 
     conn.commit()
     cur.close()
@@ -472,20 +479,43 @@ def save_image_result(
     status:         str,
     error_code:     Optional[str] = None,
     error_msg:      Optional[str] = None,
+    vision_data:    Optional[str] = None,
+    transform_data: Optional[str] = None,
 ) -> None:
     conn = _conn()
     cur  = conn.cursor()
+
+    # Get MAX reprocess_count across the entire SKU (not just this file)
+    # so all images in the SKU stay on the same version number.
+    cur.execute("""
+        SELECT COALESCE(MAX(reprocess_count), 0) AS max_rc
+        FROM   image_results
+        WHERE  sku_id = %s
+    """, (sku_id,))
+    row = cur.fetchone()
+    reprocess_count = (row[0] or 0) + 1
+
     cur.execute("""
         INSERT INTO image_results
             (run_id, sku_id, blob_name, filename, method,
              cloudinary_url, azure_url, status,
-             error_code, error_msg, processed_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+             error_code, error_msg, processed_at, reprocess_count,
+             vision_data, transform_data)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """, (
         run_id, sku_id, blob_name, filename, method,
         cloudinary_url, azure_url, status,
-        error_code, error_msg, datetime.now(),
+        error_code, error_msg, datetime.now(), reprocess_count,
+        vision_data, transform_data,
     ))
+
+    # Sync all other rows for this SKU to the same reprocess_count
+    cur.execute("""
+        UPDATE image_results
+        SET    reprocess_count = %s
+        WHERE  sku_id = %s
+    """, (reprocess_count, sku_id))
+
     conn.commit()
     cur.close()
     conn.close()

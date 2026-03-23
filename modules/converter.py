@@ -82,15 +82,33 @@ def convert_image_bytes(
     cloudinary_url  : Cloudinary CDN URL (None when Pillow path used)
     """
     # ── Single Vision API call for both text + object detection ──
-    texts, objects = _vision_analyze(image_bytes, logger)
+    texts, objects, labels, web_entities = _vision_analyze(image_bytes, logger)
+
+    # ── Build vision_data string for DB audit ─────────────────
+    text_heavy   = _is_text_heavy(texts, logger)
+    bag_override = False
 
     # ── Step 1: text-heavy check ─────────────────────────────
-    if _is_text_heavy(texts, logger):
-        logger.info(f"[{filename}] text-heavy → Cloudinary pad  bg={pad_mode}")
-        return _cloudinary_pad(image_bytes, sku_id, filename, logger, pad_mode)
+    if text_heavy:
+        # Bags/accessories with patterned linings are falsely flagged as
+        # text-heavy (repeated logo dots count as chars). Cross-check
+        # OBJ + LABEL + WEB — if any signal a bag, skip PAD.
+        if _is_bag(objects, labels, web_entities, logger):
+            bag_override = True
+            logger.info(f"[{filename}] text-heavy overridden — bag detected → smart crop")
+        else:
+            logger.info(f"[{filename}] text-heavy → Cloudinary pad  bg={pad_mode}")
+            output_bytes, used_cloudinary, cloudinary_url, transform_data = \
+                _cloudinary_pad(image_bytes, sku_id, filename, logger, pad_mode)
+            vision_data = _build_vision_data(texts, objects, labels, web_entities, text_heavy, bag_override)
+            return output_bytes, used_cloudinary, cloudinary_url, vision_data, transform_data
+
+    vision_data = _build_vision_data(texts, objects, labels, web_entities, text_heavy, bag_override)
 
     # ── Step 2: smart crop / AI reframe ──────────────────────
-    return _smart_crop_or_ai(image_bytes, sku_id, filename, logger, pad_mode, objects)
+    output_bytes, used_cloudinary, cloudinary_url, transform_data = \
+        _smart_crop_or_ai(image_bytes, sku_id, filename, logger, pad_mode, objects)
+    return output_bytes, used_cloudinary, cloudinary_url, vision_data, transform_data
 
 
 def reprocess_single_image(
@@ -141,18 +159,29 @@ def reprocess_single_image(
 
 def _vision_analyze(image_bytes: bytes, logger: logging.Logger):
     """
-    Single Vision API call requesting both TEXT_DETECTION and
-    OBJECT_LOCALIZATION. Returns (text_annotations, localized_object_annotations).
+    Single Vision API call: TEXT, OBJECT, LABEL, WEB.
+    Returns (text_annotations, localized_object_annotations, label_annotations, web_entities).
     """
     request = vision.AnnotateImageRequest(
         image    = vision.Image(content=image_bytes),
         features = [
             vision.Feature(type_=vision.Feature.Type.TEXT_DETECTION),
             vision.Feature(type_=vision.Feature.Type.OBJECT_LOCALIZATION),
+            vision.Feature(type_=vision.Feature.Type.LABEL_DETECTION, max_results=20),
+            vision.Feature(type_=vision.Feature.Type.WEB_DETECTION,   max_results=10),
         ],
     )
-    response = _vision_client.annotate_image(request)
-    return response.text_annotations, response.localized_object_annotations
+    response     = _vision_client.annotate_image(request)
+    texts        = response.text_annotations
+    objects      = response.localized_object_annotations
+    labels       = response.label_annotations
+    web_entities = response.web_detection.web_entities if response.web_detection else []
+
+    logger.info(
+        f"Vision text_chars={len(texts[0].description.strip()) if texts else 0}  "
+        f"objects={len(objects)}  labels={len(labels)}  web_entities={len(web_entities)}"
+    )
+    return texts, objects, labels, web_entities
 
 
 # ============================================================
@@ -163,8 +192,59 @@ def _is_text_heavy(texts, logger: logging.Logger) -> bool:
     if not texts:
         return False
     char_count = len(texts[0].description.strip())
-    logger.debug(f"Vision text chars={char_count}  threshold={TEXT_THRESHOLD}")
+    logger.info(f"Vision text chars={char_count}  threshold={TEXT_THRESHOLD}")
     return char_count > TEXT_THRESHOLD
+
+
+# Bag/accessory keywords checked across OBJ + LABEL + WEB signals.
+# Patterned linings (logo dots) cause false text-heavy verdicts on bags —
+# any match here overrides text-heavy and routes to smart crop.
+_BAG_KEYWORDS = {
+    "Bag", "Handbag", "Tote bag", "Backpack", "Luggage & bags",
+    "Shoulder Bag", "Hand luggage", "Satchel", "Clutch bag",
+    "Briefcase", "Suitcase", "Wallet", "Fashion accessory",
+}
+
+def _is_bag(objects, labels, web_entities, logger: logging.Logger) -> bool:
+    """
+    Return True if any Vision signal (OBJ / LABEL / WEB) identifies a bag.
+    Checks all three because OBJ often returns nothing for product shots.
+    """
+    # 1. Object localization
+    for obj in objects:
+        if obj.name in _BAG_KEYWORDS:
+            logger.info(f"Vision bag override via OBJ: '{obj.name}' score={obj.score:.3f}")
+            return True
+
+    # 2. Label detection (scene-level — most reliable for product shots)
+    for lbl in labels:
+        if lbl.description in _BAG_KEYWORDS:
+            logger.info(f"Vision bag override via LABEL: '{lbl.description}' score={lbl.score:.3f}")
+            return True
+
+    # 3. Web entities
+    for ent in web_entities:
+        if ent.description and ent.description in _BAG_KEYWORDS:
+            logger.info(f"Vision bag override via WEB: '{ent.description}' score={ent.score:.3f}")
+            return True
+
+    return False
+
+
+def _build_vision_data(texts, objects, labels, web_entities, text_heavy: bool, bag_override: bool) -> str:
+    """Build a compact comma-separated key:value string for DB storage."""
+    text_chars  = len(texts[0].description.strip()) if texts else 0
+    obj_names   = "|".join(o.name for o in objects)          or "none"
+    label_names = "|".join(l.description for l in labels[:5]) or "none"
+    web_names   = "|".join(e.description for e in web_entities[:3] if e.description) or "none"
+    return (
+        f"text_chars:{text_chars},"
+        f"text_heavy:{str(text_heavy).lower()},"
+        f"bag_override:{str(bag_override).lower()},"
+        f"objects:{obj_names},"
+        f"labels:{label_names},"
+        f"web:{web_names}"
+    )[:500]   # hard cap to fit VARCHAR(500)
 
 
 # ============================================================
@@ -241,11 +321,11 @@ def _smart_crop_or_ai(
     logger:      logging.Logger,
     pad_mode:    str,
     objects,
-) -> tuple[bytes, bool, Optional[str]]:
+) -> tuple[bytes, bool, Optional[str], str]:
 
-    img      = Image.open(io.BytesIO(image_bytes))
+    img          = Image.open(io.BytesIO(image_bytes))
     img_w, img_h = img.size
-    bbox     = _detect_bbox(objects, logger)
+    bbox         = _detect_bbox(objects, logger)
 
     # Force all through Cloudinary if FULL_AI=true
     if FULL_AI:
@@ -255,7 +335,17 @@ def _smart_crop_or_ai(
     # No detection → safe local center crop
     if not bbox:
         logger.info(f"[{filename}] no detection → local center crop")
-        return _pil_center_crop(img), False, None
+        w, h = img.size
+        if w / h > TARGET_RATIO:
+            new_w  = int(h * TARGET_RATIO)
+            left   = (w - new_w) // 2
+            top, right, bottom = 0, left + new_w, h
+        else:
+            new_h  = int(w / TARGET_RATIO)
+            top    = (h - new_h) // 2
+            left, right, bottom = 0, w, top + new_h
+        td = f"engine:pillow,method:center_crop,left:{left},top:{top},right:{right},bottom:{bottom}"
+        return _pil_center_crop(img), False, None, td
 
     x_min_norm, _, x_max_norm, _ = bbox
     x_min        = int(x_min_norm * img_w)
@@ -272,7 +362,8 @@ def _smart_crop_or_ai(
     left   = max(0, min(obj_cx - target_width // 2, img_w - target_width))
     right  = left + target_width
     logger.info(f"[{filename}] local crop  ({left},0)→({right},{img_h})")
-    return _pil_to_bytes(img.crop((left, 0, right, img_h))), False, None
+    td = f"engine:pillow,method:object_crop,cx:{obj_cx},left:{left},top:0,right:{right},bottom:{img_h}"
+    return _pil_to_bytes(img.crop((left, 0, right, img_h))), False, None, td
 
 
 # ============================================================
@@ -286,35 +377,37 @@ def _cloudinary_reframe(
     bbox:        Optional[tuple],
     logger:      logging.Logger,
     pad_mode:    str,
-) -> tuple[bytes, bool, str]:
+) -> tuple[bytes, bool, str, str]:
     bg = _pad_bg(pad_mode)
 
     if not bbox:
-        # No bbox → safe fill
         transformation = [{"width": TARGET_W, "height": TARGET_H,
                            "crop": "fill", "gravity": "auto"}]
+        td = f"engine:cloudinary,crop:fill,gravity:auto,w:{TARGET_W},h:{TARGET_H}"
         logger.info(f"[{filename}] Cloudinary FILL (no bbox)")
     else:
         _, y_min_norm, _, _ = bbox
         if y_min_norm < 0.05:
-            # Head touching top → fill to avoid cutting off
             transformation = [{"width": TARGET_W, "height": TARGET_H,
                                "crop": "fill", "gravity": "auto"}]
+            td = f"engine:cloudinary,crop:fill,gravity:auto,w:{TARGET_W},h:{TARGET_H},reason:head_tight"
             logger.info(f"[{filename}] Cloudinary FILL (head tight, y_min={y_min_norm:.3f})")
         elif pad_mode == "no":
-            # --pad-mode no: always fill, no background padding
             transformation = [
                 {"width": TARGET_W, "height": TARGET_H, "crop": "fill", "gravity": "auto"},
                 {"quality": "auto", "fetch_format": "auto"},
             ]
+            td = f"engine:cloudinary,crop:fill,gravity:auto,quality:auto,fetch_format:auto,w:{TARGET_W},h:{TARGET_H}"
             logger.info(f"[{filename}] Cloudinary FILL  y_min={y_min_norm:.3f}")
         else:
             transformation = [{"width": TARGET_W, "height": TARGET_H,
                                "crop": "pad",  "gravity": "center",
                                "background": bg}]
+            td = f"engine:cloudinary,crop:pad,gravity:center,bg:{bg},w:{TARGET_W},h:{TARGET_H}"
             logger.info(f"[{filename}] Cloudinary PAD  bg={bg}  y_min={y_min_norm:.3f}")
 
-    return _cloudinary_upload_and_fetch(image_bytes, sku_id, filename, transformation, logger)
+    out_bytes, used, url = _cloudinary_upload_and_fetch(image_bytes, sku_id, filename, transformation, logger)
+    return out_bytes, used, url, td
 
 
 def _cloudinary_pad(
@@ -323,13 +416,15 @@ def _cloudinary_pad(
     filename:    str,
     logger:      logging.Logger,
     pad_mode:    str,
-) -> tuple[bytes, bool, str]:
+) -> tuple[bytes, bool, str, str]:
     # Text-heavy images always use PAD regardless of --pad-mode
     bg = _pad_bg(pad_mode)
     transformation = [{"width": TARGET_W, "height": TARGET_H,
                        "crop": "pad", "gravity": "center",
                        "background": bg}]
-    return _cloudinary_upload_and_fetch(image_bytes, sku_id, filename, transformation, logger)
+    td = f"engine:cloudinary,crop:pad,gravity:center,bg:{bg},w:{TARGET_W},h:{TARGET_H},reason:text_heavy"
+    out_bytes, used, url = _cloudinary_upload_and_fetch(image_bytes, sku_id, filename, transformation, logger)
+    return out_bytes, used, url, td
 
 
 def _cloudinary_upload_and_fetch(

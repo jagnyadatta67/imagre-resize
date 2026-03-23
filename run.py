@@ -212,9 +212,8 @@ def process_sku(
             image_bytes = azure.download_blob_bytes(container_name, blob_name)
 
             # b. Convert in memory: Vision → Cloudinary or Pillow
-            output_bytes, used_cloudinary, cloudinary_url = convert_image_bytes(
-                image_bytes, filename, sku_id, sku_log, pad_mode=pad_mode
-            )
+            output_bytes, used_cloudinary, cloudinary_url, vision_data, transform_data = \
+                convert_image_bytes(image_bytes, filename, sku_id, sku_log, pad_mode=pad_mode)
 
             # c. Upload result to Azure {container}/lifestyle-converted/
             azure_url = azure.upload_to_newc(filename, output_bytes, container_name)
@@ -235,6 +234,7 @@ def process_sku(
                 run_id, sku_id, blob_name, filename,
                 "cloudinary" if used_cloudinary else "pillow",
                 cloudinary_url, azure_url, "done",
+                vision_data=vision_data, transform_data=transform_data,
             )
             sku_log.info(
                 f"  ✓ {filename}"
