@@ -114,9 +114,29 @@ class AzureClient:
         (container_name, source)
           source is "unbxd" when detected, "fallback" when not found / error.
         """
+        _headers = {
+            "accept":             "*/*",
+            "accept-language":    "en-US,en;q=0.9",
+            "content-type":       "application/json",
+            "origin":             "https://www.lifestylestores.com",
+            "referer":            "https://www.lifestylestores.com/",
+            "sec-ch-ua":          '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            "sec-ch-ua-mobile":   "?0",
+            "sec-ch-ua-platform": '"macOS"',
+            "sec-fetch-dest":     "empty",
+            "sec-fetch-mode":     "cors",
+            "sec-fetch-site":     "cross-site",
+            "unbxd-user-id":      "uid-9134783168516",
+            "user-agent":         (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/145.0.0.0 Safari/537.36"
+            ),
+        }
         try:
             resp = requests.get(
                 UNBXD_URL,
+                headers=_headers,
                 params={"q": sku_id, "facet": "false", "fields": "imageUrl"},
                 timeout=8,
             )
