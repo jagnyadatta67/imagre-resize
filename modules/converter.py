@@ -118,7 +118,7 @@ def convert_image_bytes(
             bag_override = True
             logger.info(f"[{filename}] text-heavy overridden — bag detected → smart crop")
         else:
-            logger.info(f"[{filename}] text-heavy → Cloudinary pad  bg={pad_mode}")
+            logger.info(f"[{filename}] text-heavy → Cloudinary fill  gravity:auto")
             output_bytes, used_cloudinary, cloudinary_url, transform_data = \
                 _cloudinary_pad(image_bytes, sku_id, filename, logger, pad_mode)
             vision_data = _build_vision_data(texts, objects, labels, web_entities, text_heavy, bag_override)
@@ -442,12 +442,10 @@ def _cloudinary_pad(
     logger:      logging.Logger,
     pad_mode:    str,
 ) -> tuple[bytes, bool, str, str]:
-    # Text-heavy images always use PAD regardless of --pad-mode
-    bg = _pad_bg(pad_mode)
+    # Text-heavy images → crop:fill gravity:auto (same as reprocess logic)
     transformation = [{"width": TARGET_W, "height": TARGET_H,
-                       "crop": "pad", "gravity": "center",
-                       "background": bg}]
-    td = f"engine:cloudinary,crop:pad,gravity:center,bg:{bg},w:{TARGET_W},h:{TARGET_H},reason:text_heavy"
+                       "crop": "fill", "gravity": "auto"}]
+    td = f"engine:cloudinary,crop:fill,gravity:auto,w:{TARGET_W},h:{TARGET_H},reason:text_heavy"
     out_bytes, used, url = _cloudinary_upload_and_fetch(image_bytes, sku_id, filename, transformation, logger)
     return out_bytes, used, url, td
 
