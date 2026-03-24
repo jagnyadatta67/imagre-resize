@@ -11,9 +11,12 @@ TARGET_CONTAINER    = os.getenv("TARGET_CONTAINER", "lifestyle-newc")
 FALLBACK_CONTAINER  = os.getenv("FALLBACK_CONTAINER", "in-media")
 
 # ── Cloudinary ────────────────────────────────────────────────
-CLOUDINARY_CLOUD    = os.getenv("CLOUDINARY_CLOUD_NAME", "doslxvsej")
-CLOUDINARY_KEY      = os.getenv("CLOUDINARY_API_KEY", "965752784145569")
-CLOUDINARY_SECRET   = os.getenv("CLOUDINARY_API_SECRET", "347dE1L37vR3KUyW03_9sTkk-9s")
+
+
+CLOUDINARY_CLOUD    = os.getenv("CLOUDINARY_CLOUD_NAME", "dhaia5qbl")
+CLOUDINARY_KEY      = os.getenv("CLOUDINARY_API_KEY", "123194615629736")
+CLOUDINARY_SECRET   = os.getenv("CLOUDINARY_API_SECRET", "KlJF3zzcbbM3tAjeEdEKSkdTsPk")
+
 
 # ── MySQL ─────────────────────────────────────────────────────
 MYSQL_HOST          = os.getenv("MYSQL_HOST", "localhost")
