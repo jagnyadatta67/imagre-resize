@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 from typing import Optional
 
 import numpy as np
@@ -51,6 +52,26 @@ cloudinary.config(
     api_secret = CLOUDINARY_SECRET,
     secure     = True,
 )
+
+# ── One-time startup: log which accounts are in use ───────────
+try:
+    import google.auth as _gauth
+    _gcreds, _gproject = _gauth.default()
+    _google_account = (
+        getattr(_gcreds, "service_account_email", None)
+        or getattr(_gcreds, "_service_account_email", None)
+        or "user-account (ADC)"
+    )
+except Exception as _e:
+    _google_account = f"unavailable ({_e})"
+
+_google_cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "(default ADC / env not set)")
+
+log.info("=" * 62)
+log.info("  CLOUDINARY   cloud=%-20s  key=%s***", CLOUDINARY_CLOUD, CLOUDINARY_KEY[:6])
+log.info("  GOOGLE VISION  account   : %s", _google_account)
+log.info("  GOOGLE VISION  cred file : %s", _google_cred_path)
+log.info("=" * 62)
 
 
 # ============================================================
