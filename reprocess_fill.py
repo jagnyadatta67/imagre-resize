@@ -46,6 +46,7 @@ from config import (
     TARGET_W, TARGET_H, BULK_WORKERS,
 )
 from modules import db
+from modules.db import update_reprocess_transform
 from modules.azure_client import AzureClient
 
 # ── Cloudinary singleton ──────────────────────────────────────
@@ -186,20 +187,16 @@ def process_one(
         img_log.error(f"Azure upload failed  {filename}: {exc}")
         return "failed"
 
-    # ── 5. Update image_results in MySQL ──────────────────────
+    # ── 5. Update image_results — set reprocess_transform_data ──
     try:
-        db.save_image_result(
-            run_id        = run_id,
-            sku_id        = sku_id,
-            blob_name     = blob_name,
-            filename      = filename,
-            method        = "reprocess_fill",
-            cloudinary_url= cloudinary_url,
-            azure_url     = azure_url,
-            status        = "done",
-            transform_data= TRANSFORM_DATA,
+        update_reprocess_transform(
+            sku_id                   = sku_id,
+            filename                 = filename,
+            reprocess_transform_data = TRANSFORM_DATA,
+            new_cloudinary_url       = cloudinary_url,
+            new_azure_url            = azure_url,
         )
-        img_log.info(f"DB updated  {filename}")
+        img_log.info(f"DB updated  {filename}  reprocess_transform_data={TRANSFORM_DATA}")
     except Exception as exc:
         img_log.error(f"DB update failed  {filename}: {exc}")
         return "failed"
@@ -224,6 +221,9 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true",
                         help="Download only — no Cloudinary upload or DB update")
     args = parser.parse_args()
+
+    # ── Init DB (creates transform_replacements if not exists) ─
+    db.init_db()
 
     # ── Load items ────────────────────────────────────────────
     if args.from_db:

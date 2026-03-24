@@ -188,6 +188,7 @@ def init_db() -> None:
         "ALTER TABLE image_results ADD COLUMN reprocess_count INT DEFAULT 0",
         "ALTER TABLE image_results ADD COLUMN vision_data VARCHAR(500)",
         "ALTER TABLE image_results ADD COLUMN transform_data VARCHAR(500)",
+        "ALTER TABLE image_results ADD COLUMN reprocess_transform_data VARCHAR(500)",
     ]:
         try:
             cur.execute(col_sql)
@@ -516,6 +517,42 @@ def save_image_result(
         WHERE  sku_id = %s
     """, (reprocess_count, sku_id))
 
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def update_reprocess_transform(
+    sku_id:                  str,
+    filename:                str,
+    reprocess_transform_data: str,
+    new_cloudinary_url:      Optional[str],
+    new_azure_url:           Optional[str],
+) -> None:
+    """
+    Update the latest image_results row for this sku_id+filename:
+      - sets reprocess_transform_data  (new transform applied)
+      - updates cloudinary_url + azure_url to the new ones
+    The original transform_data is preserved as-is for audit.
+    """
+    conn = _conn()
+    cur  = conn.cursor()
+    cur.execute("""
+        UPDATE image_results
+        SET    reprocess_transform_data = %s,
+               cloudinary_url           = %s,
+               azure_url                = %s
+        WHERE  sku_id   = %s
+        AND    filename = %s
+        ORDER  BY processed_at DESC
+        LIMIT  1
+    """, (
+        reprocess_transform_data,
+        new_cloudinary_url,
+        new_azure_url,
+        sku_id,
+        filename,
+    ))
     conn.commit()
     cur.close()
     conn.close()
