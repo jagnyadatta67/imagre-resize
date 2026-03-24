@@ -84,16 +84,14 @@ def load_from_csv(path: str) -> list[dict]:
     """Load sku_id, filename pairs from a CSV file."""
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
-        sample = f.read(1024)
-        f.seek(0)
-        has_header = csv.Sniffer().has_header(sample)
         reader = csv.reader(f)
-        if has_header:
-            next(reader)
         for line in reader:
             if len(line) >= 2:
-                sku_id   = line[0].strip()
-                filename = line[1].strip()
+                sku_id   = line[0].strip().strip('"')
+                filename = line[1].strip().strip('"')
+                # Skip header row
+                if sku_id.lower() == "sku_id" or filename.lower() == "filename":
+                    continue
                 if sku_id and filename:
                     rows.append({"sku_id": sku_id, "filename": filename})
     return rows

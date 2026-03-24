@@ -355,7 +355,7 @@ def get_sku_status(sku_id: str) -> Optional[dict]:
     conn = _conn()
     cur  = conn.cursor(dictionary=True)
     cur.execute(
-        "SELECT status, blob_count, last_processed_at FROM sku_results WHERE sku_id=%s",
+        "SELECT status, blob_count, last_processed_at, container_name FROM sku_results WHERE sku_id=%s",
         (sku_id,)
     )
     row = cur.fetchone()
