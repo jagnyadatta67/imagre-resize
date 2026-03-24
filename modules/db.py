@@ -523,25 +523,40 @@ def save_image_result(
 
 
 def update_reprocess_transform(
-    sku_id:                  str,
-    filename:                str,
+    sku_id:                   str,
+    filename:                 str,
     reprocess_transform_data: str,
-    new_cloudinary_url:      Optional[str],
-    new_azure_url:           Optional[str],
-) -> None:
+    new_cloudinary_url:       Optional[str],
+    new_azure_url:            Optional[str],
+) -> int:
     """
     Update the latest image_results row for this sku_id+filename:
       - sets reprocess_transform_data  (new transform applied)
       - updates cloudinary_url + azure_url to the new ones
+      - increments reprocess_count across ALL rows for this SKU
+        so CloudFlare cache is busted (?v=N)
     The original transform_data is preserved as-is for audit.
+    Returns the new reprocess_count.
     """
     conn = _conn()
     cur  = conn.cursor()
+
+    # Get current MAX reprocess_count for this SKU
+    cur.execute("""
+        SELECT COALESCE(MAX(reprocess_count), 0) AS max_rc
+        FROM   image_results
+        WHERE  sku_id = %s
+    """, (sku_id,))
+    row             = cur.fetchone()
+    new_version     = (row[0] or 0) + 1
+
+    # Update this specific image row
     cur.execute("""
         UPDATE image_results
         SET    reprocess_transform_data = %s,
                cloudinary_url           = %s,
-               azure_url                = %s
+               azure_url                = %s,
+               reprocess_count          = %s
         WHERE  sku_id   = %s
         AND    filename = %s
         ORDER  BY processed_at DESC
@@ -550,9 +565,19 @@ def update_reprocess_transform(
         reprocess_transform_data,
         new_cloudinary_url,
         new_azure_url,
+        new_version,
         sku_id,
         filename,
     ))
+
+    # Sync ALL rows for this SKU to same version → CF busts cache for all
+    cur.execute("""
+        UPDATE image_results
+        SET    reprocess_count = %s
+        WHERE  sku_id = %s
+    """, (new_version, sku_id))
+
     conn.commit()
     cur.close()
     conn.close()
+    return new_version

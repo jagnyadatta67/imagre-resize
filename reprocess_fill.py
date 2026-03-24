@@ -185,16 +185,20 @@ def process_one(
         img_log.error(f"Azure upload failed  {filename}: {exc}")
         return "failed"
 
-    # ── 5. Update image_results — set reprocess_transform_data ──
+    # ── 5. Update image_results — set reprocess_transform_data + bump version ──
     try:
-        update_reprocess_transform(
+        new_version = update_reprocess_transform(
             sku_id                   = sku_id,
             filename                 = filename,
             reprocess_transform_data = TRANSFORM_DATA,
             new_cloudinary_url       = cloudinary_url,
             new_azure_url            = azure_url,
         )
-        img_log.info(f"DB updated  {filename}  reprocess_transform_data={TRANSFORM_DATA}")
+        img_log.info(
+            f"DB updated  {filename}  "
+            f"reprocess_transform_data={TRANSFORM_DATA}  "
+            f"CF cache version → v={new_version}"
+        )
     except Exception as exc:
         img_log.error(f"DB update failed  {filename}: {exc}")
         return "failed"
