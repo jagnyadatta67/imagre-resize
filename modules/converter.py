@@ -165,13 +165,17 @@ def reprocess_single_image(
         transformation = [{"width": TARGET_W, "height": TARGET_H,
                            "crop": "fill", "gravity": "auto"}]
         logger.info(f"[{filename}] manual reprocess → Cloudinary FILL")
-        return _cloudinary_upload_and_fetch(
+        out_bytes, used, url = _cloudinary_upload_and_fetch(
             image_bytes, sku_id, filename, transformation, logger
         )
+        return out_bytes, used, url
 
     # gen_fill or auto → Cloudinary PAD with the chosen background
     logger.info(f"[{filename}] manual reprocess → Cloudinary PAD bg={method}")
-    return _cloudinary_pad(image_bytes, sku_id, filename, logger, pad_mode=method)
+    out_bytes, used, url, _td = _cloudinary_pad(
+        image_bytes, sku_id, filename, logger, pad_mode=method
+    )
+    return out_bytes, used, url
 
 
 # ============================================================
