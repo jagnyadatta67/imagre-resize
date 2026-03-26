@@ -141,6 +141,7 @@
             </div>
             {% endif %}
             <!-- Reprocess button -->
+            {% if show_reprocess %}
             <button
               data-sku="{{ sku.sku_id }}"
               data-filename="{{ img.filename }}"
@@ -153,6 +154,7 @@
             >
               🔄 Reprocess
             </button>
+            {% endif %}
           </div>
 
         </div>

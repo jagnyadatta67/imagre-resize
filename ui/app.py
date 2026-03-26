@@ -389,6 +389,7 @@ def _build_dev_sku(cur, query: str):
 def index():
     bq = request.args.get("bq", "").strip()   # business search query
     dq = request.args.get("dq", "").strip()   # developer SKU search query
+    show_reprocess = request.args.get("re") == "1"
 
     db  = get_db()
     cur = db.cursor(dictionary=True)
@@ -413,6 +414,7 @@ def index():
         dev_sku          = dev_sku,
         dev_images       = dev_images,
         dq               = dq,
+        show_reprocess   = show_reprocess,
     )
 
 
