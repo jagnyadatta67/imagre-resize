@@ -148,7 +148,7 @@
           {{ sku.sku_id }}
         </p>
         <div style="display:flex; align-items:center; justify-content:space-between; margin-top:5px;">
-          <span style="font-size:.7rem; color:#64748b;">🖼 {{ sku.azure_uploaded or sku.blob_count or 0 }} images</span>
+          <span style="font-size:.7rem; color:#64748b;">🖼 {{ sku.image_count or sku.azure_uploaded or sku.blob_count or 0 }} images</span>
           <span class="badge {% if sku.status == 'done' %}badge-done{% elif sku.status == 'failed' %}badge-failed{% else %}badge-skipped{% endif %}"
                 style="font-size:.6rem; padding:1px 7px;">{{ sku.status }}</span>
         </div>
