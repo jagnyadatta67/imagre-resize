@@ -34,18 +34,18 @@
     <!-- Quick stats strip -->
     <div style="display:flex; gap:32px; margin-top:56px; text-align:center;">
       <div>
-        <div style="font-size:1.6rem; font-weight:700; color:#10b981;">{{ stats.total or 0 }}</div>
+        <div style="font-size:1.6rem; font-weight:700; color:#1e293b;">{{ stats.total or 0 }}</div>
         <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Total SKUs</div>
       </div>
       <div style="width:1px; background:#e2e8f0;"></div>
       <div>
-        <div style="font-size:1.6rem; font-weight:700; color:#10b981;">{{ stats.done or 0 }}</div>
-        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Processed</div>
+        <div style="font-size:1.6rem; font-weight:700; color:#10b981;">{{ stats.passed or 0 }}</div>
+        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Passed</div>
       </div>
       <div style="width:1px; background:#e2e8f0;"></div>
       <div>
-        <div style="font-size:1.6rem; font-weight:700; color:#6366f1;">{{ stats.total_images or 0 }}</div>
-        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Images Available</div>
+        <div style="font-size:1.6rem; font-weight:700; color:#ef4444;">{{ stats.failed or 0 }}</div>
+        <div style="font-size:.75rem; color:#94a3b8; margin-top:2px;">Failed</div>
       </div>
     </div>
   </div>
@@ -197,8 +197,8 @@
       <div class="stat-label">Total SKUs</div>
     </div>
     <div class="stat-card">
-      <div class="stat-value" style="color:#10b981;">{{ stats.done or 0 }}</div>
-      <div class="stat-label">✅ Done</div>
+      <div class="stat-value" style="color:#10b981;">{{ stats.passed or 0 }}</div>
+      <div class="stat-label">✅ Passed</div>
     </div>
     <div class="stat-card">
       <div class="stat-value" style="color:#ef4444;">{{ stats.failed or 0 }}</div>

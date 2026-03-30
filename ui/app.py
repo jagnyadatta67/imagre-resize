@@ -243,11 +243,12 @@ def from_json_filter(val) -> list:
 def _get_stats(cur) -> dict:
     cur.execute("""
         SELECT
-            COUNT(*)              AS total,
-            SUM(status = 'done')  AS done,
-            SUM(status = 'failed')AS failed,
-            SUM(status = 'skipped') AS skipped,
-            SUM(azure_uploaded)   AS total_images
+            COUNT(*)                                    AS total,
+            SUM(status IN ('done', 'skipped'))          AS passed,
+            SUM(status = 'done')                        AS done,
+            SUM(status = 'failed')                      AS failed,
+            SUM(status = 'skipped')                     AS skipped,
+            SUM(azure_uploaded)                         AS total_images
         FROM sku_results
     """)
     return cur.fetchone() or {}
@@ -467,7 +468,7 @@ def sku_list():
         page = max(1, int(request.args.get("page", 1)))
     except (ValueError, TypeError):
         page = 1
-    status   = request.args.get("status", "done")
+    status   = request.args.get("status", "all")
     q        = request.args.get("q", "").strip()
     per_page = 24
     offset   = (page - 1) * per_page
@@ -481,15 +482,16 @@ def sku_list():
             cur.execute("""
                 SELECT
                     COALESCE(NULLIF(category,''), 'uncategorized') AS category,
-                    COUNT(*)                           AS total,
-                    SUM(status = 'done')               AS done,
-                    SUM(status = 'failed')             AS failed,
-                    SUM(status = 'skipped')            AS skipped,
-                    SUM(azure_uploaded)                AS total_images,
+                    COUNT(*)                                        AS total,
+                    SUM(status IN ('done','skipped'))               AS passed,
+                    SUM(status = 'failed')                          AS failed,
+                    SUM(azure_uploaded)                             AS total_images,
                     JSON_UNQUOTE(JSON_EXTRACT(
-                        MAX(CASE WHEN status='done' THEN azure_urls END),
-                        '$[0]'
-                    ))                                 AS sample_azure_url
+                        COALESCE(
+                            MAX(CASE WHEN status='done'    THEN azure_urls END),
+                            MAX(CASE WHEN status='skipped' THEN azure_urls END)
+                        ), '$[0]'
+                    ))                                              AS sample_azure_url
                 FROM  sku_results
                 GROUP BY COALESCE(NULLIF(category,''), 'uncategorized')
                 ORDER BY category

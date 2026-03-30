@@ -45,14 +45,11 @@
           <span style="font-size:.75rem; color:#64748b;">{{ cat.total_images or 0 }} images</span>
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          {% if cat.done %}
-          <span class="badge badge-done" style="font-size:.65rem;">✅ {{ cat.done }} done</span>
+          {% if cat.passed %}
+          <span class="badge badge-done" style="font-size:.65rem;">✅ {{ cat.passed }} passed</span>
           {% endif %}
           {% if cat.failed %}
           <span class="badge badge-failed" style="font-size:.65rem;">❌ {{ cat.failed }} failed</span>
-          {% endif %}
-          {% if cat.skipped %}
-          <span class="badge badge-skipped" style="font-size:.65rem;">⏭️ {{ cat.skipped }} skipped</span>
           {% endif %}
         </div>
       </div>
