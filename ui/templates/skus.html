@@ -88,7 +88,7 @@
       <p style="font-size:.82rem; color:#94a3b8; margin:4px 0 0;">
         {{ ((page-1)*per_page)+1 }}–{{ [page*per_page, total]|min }} of
         <strong>{{ total }}</strong>
-        {% if status != 'all' %}{{ status }}{% endif %} SKUs
+        {% if status == 'done' %}passed{% elif status == 'failed' %}failed{% endif %} SKUs
       </p>
     </div>
   </div>
@@ -99,7 +99,7 @@
 
     <!-- Status filter pills -->
     <div style="display:flex; background:#f1f5f9; border-radius:10px; padding:3px; gap:2px;">
-      {% for s, label in [('done','✅ Done'), ('failed','❌ Failed'), ('all','All')] %}
+      {% for s, label in [('all','All'), ('done','✅ Passed'), ('failed','❌ Failed')] %}
       <button type="submit" name="status" value="{{ s }}"
         style="border:none; cursor:pointer; border-radius:8px; padding:5px 14px; font-size:.78rem; font-weight:600; transition:all .15s;
                {% if status == s %}background:#fff; color:#4f46e5; box-shadow:0 1px 4px rgba(0,0,0,.1);{% else %}background:transparent; color:#64748b;{% endif %}">
@@ -167,7 +167,7 @@
   <div style="font-size:3rem; margin-bottom:12px;">📭</div>
   <p style="font-size:1rem; font-weight:600; color:#64748b;">No SKUs found</p>
   <p style="font-size:.82rem; margin-top:6px;">
-    {% if q %}No results for "<strong>{{ q }}</strong>"{% else %}No {{ status }} SKUs in {{ category }}{% endif %}
+    {% if q %}No results for "<strong>{{ q }}</strong>"{% elif status == 'done' %}No passed SKUs in {{ category }}{% elif status == 'failed' %}No failed SKUs in {{ category }}{% else %}No SKUs in {{ category }}{% endif %}
   </p>
 </div>
 {% endif %}

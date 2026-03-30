@@ -511,9 +511,10 @@ def sku_list():
             where_parts = ["category = %s"]
             params      = [category]
 
-        if status != "all":
-            where_parts.append("status = %s")
-            params.append(status)
+        if status == "done":
+            where_parts.append("status IN ('done', 'skipped')")
+        elif status == "failed":
+            where_parts.append("status = 'failed'")
         if q:
             where_parts.append("sku_id LIKE %s")
             params.append(f"%{q}%")
