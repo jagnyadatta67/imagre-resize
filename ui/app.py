@@ -607,7 +607,7 @@ def api_reprocess_image():
         image_bytes = _azure.download_blob_bytes(container_name, blob_name)
 
         # ── 3. Reprocess (no Vision AI) ───────────────────────
-        output_bytes, used_cloudinary, cloudinary_url = reprocess_single_image(
+        output_bytes, used_cloudinary, cloudinary_url, _vision_data, _transform_data = reprocess_single_image(
             image_bytes, filename, sku_id, method, logger
         )
 
