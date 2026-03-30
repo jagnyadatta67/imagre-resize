@@ -531,15 +531,18 @@ def sku_list():
                     WHERE  ir.sku_id = s.sku_id AND ir.reprocess_count > 0
                     ORDER  BY ir.reprocess_count DESC, ir.processed_at DESC
                     LIMIT  1)                                        AS reprocessed_azure_url,
-                   (SELECT COUNT(DISTINCT ir2.filename)
+                   (SELECT MAX(ir2.reprocess_count)
                     FROM   image_results ir2
-                    WHERE  ir2.sku_id = s.sku_id
-                      AND  ir2.reprocess_count = (
-                               SELECT MAX(ir3.reprocess_count)
-                               FROM   image_results ir3
-                               WHERE  ir3.sku_id = s.sku_id
+                    WHERE  ir2.sku_id = s.sku_id)                   AS max_reprocess_version,
+                   (SELECT COUNT(DISTINCT ir3.filename)
+                    FROM   image_results ir3
+                    WHERE  ir3.sku_id = s.sku_id
+                      AND  ir3.reprocess_count = (
+                               SELECT MAX(ir4.reprocess_count)
+                               FROM   image_results ir4
+                               WHERE  ir4.sku_id = s.sku_id
                            )
-                      AND  ir2.reprocess_count > 0)                 AS reprocessed_count
+                      AND  ir3.reprocess_count > 0)                 AS reprocessed_count
             FROM   sku_results s
             {where}
             ORDER  BY s.last_processed_at DESC
@@ -552,16 +555,17 @@ def sku_list():
 
     skus = []
     for row in rows:
-        # Use reprocessed image if available, else fall back to original
-        raw = row.get("reprocessed_azure_url") or row.get("first_azure_url") or ""
-        rc  = row.get("reprocessed_count") or 0
-        # Add cache-bust version if reprocessed
+        # Always use highest version URL: reprocessed if available, else original
+        raw     = row.get("reprocessed_azure_url") or row.get("first_azure_url") or ""
+        version = row.get("max_reprocess_version") or 0   # actual max version number
+        rc      = row.get("reprocessed_count") or 0
         base_url = make_cf_url(raw) or make_sas_url(raw)
-        if rc and rc > 0 and base_url:
+        # Always append ?v={max_version} to bust cache correctly
+        if base_url:
             sep      = "&" if "?" in base_url else "?"
-            base_url = f"{base_url}{sep}v={rc}"
-        # Use reprocessed count if available, else original uploaded count
-        image_count = rc if rc and rc > 0 else (row.get("azure_uploaded") or 0)
+            base_url = f"{base_url}{sep}v={version}"
+        # Image count: reprocessed count if available, else original uploaded count
+        image_count = rc if rc > 0 else (row.get("azure_uploaded") or 0)
         skus.append({**row, "thumb_url": base_url, "image_count": image_count})
 
     total_pages = max(1, (total + per_page - 1) // per_page)
