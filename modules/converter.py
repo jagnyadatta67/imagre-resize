@@ -140,7 +140,12 @@ def _build_transformation(
     if pad_mode == "fill":
         pad_mode = "no"
 
-    if pad_mode == "no":
+    if pad_mode == "center":
+        transformation = [{"width": TARGET_W, "height": TARGET_H,
+                           "crop": "fill", "gravity": "center"}]
+        td = f"engine:cloudinary,crop:fill,gravity:center,w:{TARGET_W},h:{TARGET_H}"
+        logger.info(f"[{filename}] Cloudinary FILL  (center crop)")
+    elif pad_mode == "no":
         transformation = [{"width": TARGET_W, "height": TARGET_H,
                            "crop": "fill", "gravity": "auto"}]
         td = f"engine:cloudinary,crop:fill,gravity:auto,w:{TARGET_W},h:{TARGET_H}"

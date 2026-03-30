@@ -582,8 +582,8 @@ def api_reprocess_image():
 
     if not sku_id or not filename:
         return jsonify({"ok": False, "error": "sku_id and filename are required"}), 400
-    if method not in {"gen_fill", "auto", "fill", "pillow"}:
-        return jsonify({"ok": False, "error": "method must be gen_fill, auto, fill, or pillow"}), 400
+    if method not in {"gen_fill", "auto", "fill", "center"}:
+        return jsonify({"ok": False, "error": "method must be gen_fill, auto, fill, or center"}), 400
 
     # ── 1. Fetch container from DB ────────────────────────────
     db  = get_db()
