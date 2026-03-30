@@ -75,11 +75,8 @@ UNBXD_SITE_KEY = os.getenv("UNBXD_SITE_KEY", "ss-unbxd-aapac-prod-lifestyle-Land
 
 BASE_URL = f"https://search.unbxd.io/{UNBXD_API_KEY}/{UNBXD_SITE_KEY}/category"
 
-# Single call — fetch all women products with allCategories for local bucketing
+# Single call — fetch all products with allCategories for local bucketing
 FIELDS = "productCode,imageUrl,allCategories"
-
-# p-filter: all products under the top-level "women" node
-WOMEN_FILTER = "allCategories_uFilter:women"
 
 # Fixed filters applied to every request
 BASE_FILTERS = [
@@ -127,25 +124,27 @@ def _derive_container(image_url: str) -> str:
         return ""
 
 
-def _extract_l2_categories(all_categories: list[str]) -> list[str]:
+def _extract_l2_categories(all_categories: list[str], cat: str) -> list[str]:
     """
     Return only L2 category slugs from a product's allCategories list.
 
     L2 rule:
-      - starts with "women-"
+      - starts with "{cat}-"   e.g. "women-" or "kids-"
       - contains exactly ONE hyphen  →  "women-tops" ✓, "women-nightwear-bottoms" ✗
     """
+    prefix = f"{cat}-"
     return [
         slug for slug in all_categories
         if isinstance(slug, str)
-        and slug.startswith("women-")
+        and slug.startswith(prefix)
         and slug.count("-") == 1
     ]
 
 
 # ── Core fetch logic ───────────────────────────────────────────────────────────
 
-def fetch_all_women_products(
+def fetch_all_products(
+    cat: str,
     rows: int = 48,
     max_retries: int = 3,
     retry_delay: float = 2.0,
@@ -172,11 +171,12 @@ def fetch_all_women_products(
     page = 1
 
     while True:
+        cat_filter = f"allCategories_uFilter:{cat}"
         params = [
             ("rows",     rows),
             ("page",     page),
             ("pagetype", "boolean"),
-            ("p",        WOMEN_FILTER),
+            ("p",        cat_filter),
             ("facet",    "false"),   # no facets needed — saves bandwidth
             ("fields",   FIELDS),
         ] + BASE_FILTERS
@@ -246,7 +246,7 @@ def fetch_all_women_products(
             raw_cats = p.get("allCategories") or []
             if isinstance(raw_cats, str):
                 raw_cats = [raw_cats]
-            l2_cats = _extract_l2_categories(raw_cats)
+            l2_cats = _extract_l2_categories(raw_cats, cat)
 
             page_items.append({
                 "sku_id":        product_code,
@@ -296,9 +296,15 @@ def write_csv(products: list[dict], out_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Fetch ALL women SKUs from Unbxd in one call, "
+            "Fetch ALL SKUs from Unbxd in one call for a given category, "
             "split by L2 allCategories, write input CSVs."
         )
+    )
+    parser.add_argument(
+        "--cat",
+        default = "women",
+        metavar = "CAT",
+        help    = "Top-level category to fetch (default: women). e.g. women, kids, men",
     )
     parser.add_argument(
         "--out-dir",
@@ -322,14 +328,14 @@ def main() -> None:
 
     out_dir = Path(args.out_dir)
     log.info(
-        f"Starting Unbxd SKU fetch — single call for all women, "
+        f"Starting Unbxd SKU fetch — cat={args.cat}, "
         f"rows/page={args.rows}, out_dir={out_dir}"
         f"{' [DRY RUN]' if args.dry_run else ''}"
     )
-    log.info(f"  Filter: {WOMEN_FILTER}")
+    log.info(f"  Filter: allCategories_uFilter:{args.cat}")
 
-    # ── Fetch all women products ───────────────────────────────────────────────
-    all_products = fetch_all_women_products(rows=args.rows)
+    # ── Fetch all products ─────────────────────────────────────────────────────
+    all_products = fetch_all_products(cat=args.cat, rows=args.rows)
 
     log.info(f"\n  Total raw products fetched: {len(all_products)}")
 
@@ -354,7 +360,7 @@ def main() -> None:
 
     if no_l2_count:
         log.warning(
-            f"  {no_l2_count} product(s) had no L2 women-* category — skipped"
+            f"  {no_l2_count} product(s) had no L2 {args.cat}-* category — skipped"
         )
 
     # ── Write CSVs & collect summary ──────────────────────────────────────────

@@ -712,14 +712,6 @@ FAILED_SKU_ID,,true</pre>
           <div style="font-size:.7rem; color:#64748b; margin-top:2px;">Smart crop, no padding</div>
         </div>
 
-        <div id="rp-btn-pillow" onclick="selectRpMethod('pillow')" style="
-          border:2px solid #e2e8f0; border-radius:10px; padding:11px 12px;
-          cursor:pointer; background:#f8fafc; transition:all .15s;"
-          onmouseover="if(rpMethod!='pillow'){this.style.borderColor='#c4b5fd';this.style.background='#f5f3ff';}"
-          onmouseout="if(rpMethod!='pillow'){this.style.borderColor='#e2e8f0';this.style.background='#f8fafc';}">
-          <div style="font-weight:600; font-size:.82rem; color:#1e293b;">🖼️ Pillow</div>
-          <div style="font-size:.7rem; color:#64748b; margin-top:2px;">Local centre crop (free)</div>
-        </div>
 
       </div>
     </div>
@@ -1074,7 +1066,7 @@ let rpFilename = '';
 let rpMethod   = 'auto';
 let rpCardImg  = null;   // the <img class="biz-img"> inside the card
 
-const _rpMethods = ['gen_fill', 'auto', 'fill', 'pillow'];
+const _rpMethods = ['gen_fill', 'auto', 'fill'];
 
 function selectRpMethod(m) {
   rpMethod = m;
