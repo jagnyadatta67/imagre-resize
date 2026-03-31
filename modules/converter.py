@@ -24,13 +24,22 @@ import logging
 from typing import Optional
 
 import requests as _req
+from requests.adapters import HTTPAdapter
 import cloudinary
 import cloudinary.uploader
 
 from config import (
     TARGET_W, TARGET_H,
     CLOUDINARY_CLOUD, CLOUDINARY_KEY, CLOUDINARY_SECRET,
+    BULK_WORKERS,
 )
+
+# Shared session with a connection pool large enough for concurrent workers.
+# Uses BULK_WORKERS as pool size (minimum 10) so CDN fetches don't discard connections.
+_POOL_SIZE = max(BULK_WORKERS, 10)
+_http = _req.Session()
+_http.mount("https://", HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE))
+_http.mount("http://",  HTTPAdapter(pool_connections=_POOL_SIZE, pool_maxsize=_POOL_SIZE))
 
 log = logging.getLogger(__name__)
 
@@ -147,15 +156,15 @@ def _build_transformation(
         logger.info(f"[{filename}] Cloudinary FILL  (center crop)")
     elif pad_mode == "no":
         transformation = [{"width": TARGET_W, "height": TARGET_H,
-                           "crop": "fill", "gravity": "auto"}]
+                           "crop": "fill", "gravity": "auto:subject"}]
         td = f"engine:cloudinary,crop:fill,gravity:auto,w:{TARGET_W},h:{TARGET_H}"
         logger.info(f"[{filename}] Cloudinary FILL  (no pad)")
     else:
         bg = _pad_bg(pad_mode)
         transformation = [{"width": TARGET_W, "height": TARGET_H,
-                           "crop": "pad",  "gravity": "center",
+                           "crop": "auto_pad",  "gravity": "auto:subject",
                            "background":   bg}]
-        td = f"engine:cloudinary,crop:pad,gravity:center,bg:{bg},w:{TARGET_W},h:{TARGET_H}"
+        td = f"engine:cloudinary,crop:auto_pad,gravity:auto:subject,bg:{bg},w:{TARGET_W},h:{TARGET_H}"
         logger.info(f"[{filename}] Cloudinary PAD  bg={bg}")
 
     return transformation, td
@@ -190,7 +199,7 @@ def _cloudinary_upload_and_fetch(
     logger.info(f"[{filename}] Cloudinary URL: {cloudinary_url}")
 
     # Fetch transformed result into memory (no disk write)
-    resp = _req.get(cloudinary_url, timeout=30)
+    resp = _http.get(cloudinary_url, timeout=30)
     resp.raise_for_status()
 
     return resp.content, True, cloudinary_url

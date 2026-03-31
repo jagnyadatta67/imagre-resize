@@ -131,6 +131,7 @@ def init_db() -> None:
             azure_uploaded      INT          DEFAULT 0,
             cloudinary_urls     JSON,
             azure_urls          JSON,
+            listing_azure_url   TEXT,
             error_code          VARCHAR(100),
             error_msg           TEXT,
             last_processed_at   DATETIME,
@@ -157,6 +158,15 @@ def init_db() -> None:
     except Exception as e:
         if "1061" in str(e) or "Duplicate key name" in str(e):
             pass   # index already exists — safe to ignore
+        else:
+            raise
+
+    try:
+        cur.execute("ALTER TABLE sku_results ADD COLUMN listing_azure_url TEXT")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass
         else:
             raise
 
@@ -403,41 +413,48 @@ def upsert_sku_result(
     """
     INSERT the first time a SKU is seen; UPDATE on every subsequent run.
     reprocessed_at is set (or refreshed) only when reprocess=True.
+    listing_cloudinary_url is always cloudinary_urls[0] — the first (sorted) image,
+    which is the _01 shot used on the listing page.
     """
     conn = _conn()
     cur  = conn.cursor()
     now  = datetime.now()
 
+    # First Azure URL = _01 image (blobs are sorted alphabetically before processing)
+    listing_azure_url = azure_urls[0] if azure_urls else None
+
     cur.execute("""
         INSERT INTO sku_results
             (run_id, sku_id, status, category, container_name, container_source,
              reprocess, blob_count, cloudinary_sent, cloudinary_skipped,
-             azure_uploaded, cloudinary_urls, azure_urls,
+             azure_uploaded, cloudinary_urls, azure_urls, listing_azure_url,
              error_code, error_msg, last_processed_at, reprocessed_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
-            run_id              = VALUES(run_id),
-            status              = VALUES(status),
-            category            = VALUES(category),
-            container_name      = VALUES(container_name),
-            container_source    = VALUES(container_source),
-            reprocess           = VALUES(reprocess),
-            blob_count          = VALUES(blob_count),
-            cloudinary_sent     = VALUES(cloudinary_sent),
-            cloudinary_skipped  = VALUES(cloudinary_skipped),
-            azure_uploaded      = VALUES(azure_uploaded),
-            cloudinary_urls     = VALUES(cloudinary_urls),
-            azure_urls          = VALUES(azure_urls),
-            error_code          = VALUES(error_code),
-            error_msg           = VALUES(error_msg),
-            last_processed_at   = VALUES(last_processed_at),
-            reprocessed_at      = IF(VALUES(reprocess) = 1, VALUES(last_processed_at), reprocessed_at)
+            run_id            = VALUES(run_id),
+            status            = VALUES(status),
+            category          = VALUES(category),
+            container_name    = VALUES(container_name),
+            container_source  = VALUES(container_source),
+            reprocess         = VALUES(reprocess),
+            blob_count        = VALUES(blob_count),
+            cloudinary_sent   = VALUES(cloudinary_sent),
+            cloudinary_skipped= VALUES(cloudinary_skipped),
+            azure_uploaded    = VALUES(azure_uploaded),
+            cloudinary_urls   = VALUES(cloudinary_urls),
+            azure_urls        = VALUES(azure_urls),
+            listing_azure_url = VALUES(listing_azure_url),
+            error_code        = VALUES(error_code),
+            error_msg         = VALUES(error_msg),
+            last_processed_at = VALUES(last_processed_at),
+            reprocessed_at    = IF(VALUES(reprocess) = 1, VALUES(last_processed_at), reprocessed_at)
     """, (
         run_id, sku_id, status, category, container_name, container_source,
         1 if reprocess else 0,
         blob_count, cloudinary_sent, cloudinary_skipped, azure_uploaded,
         json.dumps(cloudinary_urls),
         json.dumps(azure_urls),
+        listing_azure_url,
         error_code, error_msg,
         now,
         now if reprocess else None,

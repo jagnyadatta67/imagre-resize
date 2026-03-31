@@ -83,6 +83,8 @@ if not VERBOSE_LOG:
         "requests",
     ]:
         logging.getLogger(_noisy).setLevel(logging.WARNING)
+    # "Connection pool is full" is harmless with concurrent workers — suppress it
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
 
 # ============================================================

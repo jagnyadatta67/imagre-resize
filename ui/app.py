@@ -525,24 +525,22 @@ def sku_list():
 
         cur.execute(f"""
             SELECT s.sku_id, s.status, s.blob_count, s.azure_uploaded, s.last_processed_at,
-                   JSON_UNQUOTE(JSON_EXTRACT(s.azure_urls, '$[0]')) AS first_azure_url,
-                   (SELECT ir.azure_url
+                   COALESCE(
+                       s.listing_azure_url,
+                       JSON_UNQUOTE(JSON_EXTRACT(s.azure_urls, '$[0]'))
+                   )                                                 AS first_azure_url,
+                   (SELECT MAX(ir.reprocess_count)
                     FROM   image_results ir
-                    WHERE  ir.sku_id = s.sku_id AND ir.reprocess_count > 0
-                    ORDER  BY ir.reprocess_count DESC, ir.processed_at DESC
-                    LIMIT  1)                                        AS reprocessed_azure_url,
-                   (SELECT MAX(ir2.reprocess_count)
+                    WHERE  ir.sku_id = s.sku_id)                    AS max_reprocess_version,
+                   (SELECT COUNT(DISTINCT ir2.filename)
                     FROM   image_results ir2
-                    WHERE  ir2.sku_id = s.sku_id)                   AS max_reprocess_version,
-                   (SELECT COUNT(DISTINCT ir3.filename)
-                    FROM   image_results ir3
-                    WHERE  ir3.sku_id = s.sku_id
-                      AND  ir3.reprocess_count = (
-                               SELECT MAX(ir4.reprocess_count)
-                               FROM   image_results ir4
-                               WHERE  ir4.sku_id = s.sku_id
+                    WHERE  ir2.sku_id = s.sku_id
+                      AND  ir2.reprocess_count = (
+                               SELECT MAX(ir3.reprocess_count)
+                               FROM   image_results ir3
+                               WHERE  ir3.sku_id = s.sku_id
                            )
-                      AND  ir3.reprocess_count > 0)                 AS reprocessed_count
+                      AND  ir2.reprocess_count > 0)                 AS reprocessed_count
             FROM   sku_results s
             {where}
             ORDER  BY s.last_processed_at DESC
@@ -555,16 +553,16 @@ def sku_list():
 
     skus = []
     for row in rows:
-        # Always use highest version URL: reprocessed if available, else original
-        raw     = row.get("reprocessed_azure_url") or row.get("first_azure_url") or ""
-        version = row.get("max_reprocess_version") or 0   # actual max version number
-        rc      = row.get("reprocessed_count") or 0
+        # Thumbnail is always the _01 image (first_azure_url = listing_azure_url ?? azure_urls[0]).
+        # The blob is overwritten in-place on reprocess, so the URL never changes —
+        # only ?v=N changes to bust the Cloudflare cache.
+        raw      = row.get("first_azure_url") or ""
+        version  = row.get("max_reprocess_version") or 0
+        rc       = row.get("reprocessed_count") or 0
         base_url = make_cf_url(raw) or make_sas_url(raw)
-        # Always append ?v={max_version} to bust cache correctly
         if base_url:
             sep      = "&" if "?" in base_url else "?"
             base_url = f"{base_url}{sep}v={version}"
-        # Image count: reprocessed count if available, else original uploaded count
         image_count = rc if rc > 0 else (row.get("azure_uploaded") or 0)
         skus.append({**row, "thumb_url": base_url, "image_count": image_count})
 
@@ -676,6 +674,20 @@ def api_reprocess_image():
                 SET    reprocess_count = %s
                 WHERE  sku_id = %s
             """, (reprocess_count, sku_id))
+
+            # If the reprocessed image is the _01 (listing) image, keep listing_azure_url
+            # in sku_results current — the blob URL is the same (overwritten in-place),
+            # but we refresh the column so COALESCE always returns an explicit value.
+            cur2.execute("""
+                UPDATE sku_results
+                SET    listing_azure_url = CASE
+                           WHEN listing_azure_url IS NULL
+                             OR listing_azure_url LIKE %s
+                           THEN %s
+                           ELSE listing_azure_url
+                       END
+                WHERE  sku_id = %s
+            """, (f"%/{filename}", azure_url, sku_id))
         finally:
             cur2.close()
             db2.close()

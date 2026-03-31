@@ -69,10 +69,10 @@ class AzureClient:
         Raises on auth / network errors so the caller can log them.
         """
         prefix = f"{SOURCE_BLOB_PREFIX}{sku_id}"
-        blobs  = [
+        blobs  = sorted(
             b.name
             for b in self._container(container_name).list_blobs(name_starts_with=prefix)
-        ]
+        )
         log.debug(f"list_sku_blobs  container={container_name}  sku={sku_id}  found={len(blobs)}")
         return blobs
 
