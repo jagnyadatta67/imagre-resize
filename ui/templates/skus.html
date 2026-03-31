@@ -1,9 +1,14 @@
 {% extends "base.html" %}
-{% block title %}{% if category %}{{ category | title }} SKUs{% else %}Categories{% endif %}{% endblock %}
+{% block title %}{% if category %}{{ category | title }} SKUs{% elif group %}{{ group_label or group | title }}{% else %}Categories{% endif %}{% endblock %}
 
 {% block content %}
 
-{% if not category %}
+<!-- ── Category filter bar (shown on all /skus views) ──────── -->
+{% if category_groups %}
+{% include '_cat_filter.html' %}
+{% endif %}
+
+{% if not category and not group %}
 <!-- ══════════════════════════════════════════════════════════
      LEVEL 1 — Category grid
 ══════════════════════════════════════════════════════════ -->
@@ -67,6 +72,67 @@
 </div>
 {% endif %}
 
+
+{% elif group and not category %}
+<!-- ══════════════════════════════════════════════════════════
+     LEVEL 1.5 — Subcategory grid for a group (View All X)
+══════════════════════════════════════════════════════════ -->
+<div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
+  <a href="/skus" style="color:#94a3b8; text-decoration:none; font-size:.85rem; font-weight:500;
+     padding:6px 12px; border:1px solid #e2e8f0; border-radius:8px; background:#fff;"
+     onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='#fff'">
+    ← All Categories
+  </a>
+  <h1 style="font-size:1.3rem; font-weight:700; color:#1e293b; margin:0; text-transform:capitalize;">
+    {{ group_label or group }}
+  </h1>
+  <span style="font-size:.82rem; color:#94a3b8;">{{ categories | length }} subcategories</span>
+</div>
+
+{% if categories %}
+<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:20px;">
+  {% for cat in categories %}
+  <a href="/skus?category={{ cat.category }}" style="text-decoration:none;">
+    <div class="img-card" style="cursor:pointer; transition:box-shadow .15s; overflow:hidden;">
+      <div style="width:100%; aspect-ratio:3/4; background:#f1f5f9; overflow:hidden; position:relative;">
+        {% if cat.thumb_url %}
+        <img src="{{ cat.thumb_url }}" alt="{{ cat.category }}" loading="lazy"
+             style="width:100%; height:100%; object-fit:cover;"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <div style="display:none; position:absolute; inset:0; align-items:center; justify-content:center; font-size:3rem;">🏷️</div>
+        {% else %}
+        <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:3rem; color:#cbd5e1;">🏷️</div>
+        {% endif %}
+        <div style="position:absolute; bottom:0; left:0; right:0; background:linear-gradient(transparent, rgba(0,0,0,.7)); padding:24px 14px 12px;">
+          <p style="color:#fff; font-size:1rem; font-weight:700; margin:0; text-transform:capitalize;">
+            {{ cat.category.split('-', 1)[1].replace('-',' ').title() if '-' in cat.category else cat.category }}
+          </p>
+        </div>
+      </div>
+      <div style="padding:12px 14px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:.82rem; font-weight:600; color:#1e293b;">{{ cat.total }} SKUs</span>
+          <span style="font-size:.75rem; color:#64748b;">{{ cat.total_images or 0 }} images</span>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          {% if cat.passed %}
+          <span class="badge badge-done" style="font-size:.65rem;">✅ {{ cat.passed }} passed</span>
+          {% endif %}
+          {% if cat.failed %}
+          <span class="badge badge-failed" style="font-size:.65rem;">❌ {{ cat.failed }} failed</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div style="text-align:center; padding:80px 20px; color:#94a3b8;">
+  <div style="font-size:3rem; margin-bottom:12px;">📭</div>
+  <p style="font-size:1rem; font-weight:600; color:#64748b;">No subcategories found for "{{ group }}"</p>
+</div>
+{% endif %}
 
 {% else %}
 <!-- ══════════════════════════════════════════════════════════
@@ -225,6 +291,6 @@
 </p>
 {% endif %}
 
-{% endif %}{# end category/no-category #}
+{% endif %}{# end category / group / no-category #}
 
 {% endblock %}

@@ -8,6 +8,11 @@
      ════════════════════════════════════════════════════════════ -->
 <div id="business-view">
 
+  <!-- ── Category filter bar ────────────────────────────────── -->
+  {% if category_groups %}
+  {% include '_cat_filter.html' %}
+  {% endif %}
+
   <!-- ── Hero search (centred when no results) ──────────────── -->
   {% if not business_results %}
   <div style="display:flex; flex-direction:column; align-items:center; padding:72px 0 48px;">

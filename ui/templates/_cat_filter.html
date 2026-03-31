@@ -1,0 +1,142 @@
+{#
+  _cat_filter.html — Reusable 2-level category filter bar.
+  Include in any template with:  {% include '_cat_filter.html' %}
+
+  Requires these variables in context:
+    category_groups  : list of { name, label, emoji, total, passed, failed }
+    active_group     : (optional) pre-selected L1 group name  e.g. "beauty"
+#}
+
+{% set _active = active_group if active_group is defined else (group if group is defined else '') %}
+
+<div id="cat-filter-bar" style="background:#fff; border-radius:14px; border:1px solid #e5e7eb; padding:14px 18px; margin-bottom:22px;">
+
+  <!-- ── L1 Group pills ──────────────────────────────────────── -->
+  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <span style="font-size:.7rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; margin-right:2px;">
+      Browse
+    </span>
+
+    {% for grp in category_groups %}
+    <button
+      id="l1-{{ grp.name }}"
+      onclick="toggleCatGroup('{{ grp.name }}')"
+      style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:999px;
+             border:1.5px solid {% if _active == grp.name %}#6366f1{% else %}#e2e8f0{% endif %};
+             background:{% if _active == grp.name %}#eef2ff{% else %}#f8fafc{% endif %};
+             color:{% if _active == grp.name %}#4f46e5{% else %}#475569{% endif %};
+             cursor:pointer; font-size:.8rem; font-weight:600; transition:all .15s;"
+    >
+      <span>{{ grp.emoji }}</span>
+      <span>{{ grp.label }}</span>
+      <!-- passed / total badge -->
+      <span style="display:inline-flex; align-items:center; gap:1px; padding:1px 8px; border-radius:999px;
+                   background:{% if _active == grp.name %}#c7d2fe{% else %}#f1f5f9{% endif %};
+                   font-size:.66rem; font-weight:700; line-height:1.6;">
+        <span style="color:#10b981;">{{ grp.passed | int }}</span>
+        <span style="color:#94a3b8; margin:0 1px;">/</span>
+        <span style="color:#64748b;">{{ grp.total | int }}</span>
+      </span>
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- ── L2 Subcategory panel (appears on L1 click) ──────────── -->
+  <div id="l2-panel" style="display:{% if _active %}block{% else %}none{% endif %};
+       margin-top:12px; padding-top:12px; border-top:1px solid #f1f5f9;">
+    <div id="l2-chips" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+      {% if _active %}
+      <span style="color:#94a3b8; font-size:.8rem; font-style:italic;">Loading…</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+
+<script>
+/* ── Category filter bar — 2-level navigation ─────────────── */
+let _activeCatGroup = {% if _active %}"{{ _active }}"{% else %}null{% endif %};
+
+// Auto-load subcategories if a group is pre-selected (e.g. /skus?group=beauty)
+document.addEventListener('DOMContentLoaded', function () {
+  if (_activeCatGroup) _loadL2(_activeCatGroup, false);
+});
+
+async function toggleCatGroup(name) {
+  if (_activeCatGroup === name) {
+    // Clicking the active pill collapses the panel
+    _deactivateAll();
+    _activeCatGroup = null;
+    document.getElementById('l2-panel').style.display = 'none';
+    return;
+  }
+  _activeCatGroup = name;
+  _activatePill(name);
+  document.getElementById('l2-panel').style.display = 'block';
+  document.getElementById('l2-chips').innerHTML =
+    '<span style="color:#94a3b8;font-size:.8rem;font-style:italic;">Loading…</span>';
+  await _loadL2(name, true);
+}
+
+async function _loadL2(name, animate) {
+  _activatePill(name);
+  const resp = await fetch('/api/category-group/' + name);
+  const subs = await resp.json();
+  const meta = {{ _GROUP_META_JS | safe }};
+  const grpLabel = (meta[name] && meta[name].label) ? meta[name].label : (name.charAt(0).toUpperCase()+name.slice(1));
+
+  let html = `
+    <a href="/skus?group=${name}"
+       style="display:inline-flex; align-items:center; gap:5px; padding:5px 14px; border-radius:999px;
+              background:#4f46e5; color:#fff; font-size:.75rem; font-weight:700;
+              text-decoration:none; white-space:nowrap; transition:opacity .15s;"
+       onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+      View All ${grpLabel} →
+    </a>
+    <span style="width:1px; height:20px; background:#e2e8f0; display:inline-block; margin:0 2px; flex-shrink:0;"></span>
+  `;
+
+  subs.forEach(sub => {
+    const isActive = (window.location.search.includes('category=' + sub.category));
+    html += `
+      <a href="/skus?category=${sub.category}"
+         style="display:inline-flex; align-items:center; gap:5px; padding:5px 13px; border-radius:999px;
+                border:1.5px solid ${isActive ? '#6366f1' : '#e2e8f0'};
+                background:${isActive ? '#eef2ff' : '#fff'};
+                color:${isActive ? '#4f46e5' : '#374151'};
+                font-size:.75rem; font-weight:600; text-decoration:none;
+                transition:all .15s; white-space:nowrap;"
+         onmouseover="if(!${isActive}){this.style.borderColor='#6366f1';this.style.color='#4f46e5';this.style.background='#eef2ff';}"
+         onmouseout="if(!${isActive}){this.style.borderColor='#e2e8f0';this.style.color='#374151';this.style.background='#fff';}">
+        ${sub.label}
+        <span style="display:inline-flex; align-items:center; gap:1px; padding:0 6px; border-radius:999px;
+                     background:${isActive ? '#c7d2fe' : '#f1f5f9'}; font-size:.65rem; font-weight:700; line-height:1.7;">
+          <span style="color:#10b981;">${sub.passed}</span>
+          <span style="color:#94a3b8; margin:0 1px;">/</span>
+          <span style="color:#64748b;">${sub.total}</span>
+        </span>
+      </a>`;
+  });
+
+  document.getElementById('l2-chips').innerHTML = html;
+}
+
+function _deactivateAll() {
+  document.querySelectorAll('[id^="l1-"]').forEach(el => {
+    el.style.background   = '#f8fafc';
+    el.style.borderColor  = '#e2e8f0';
+    el.style.color        = '#475569';
+    const badge = el.querySelector('span span:last-child')?.parentElement;
+    if (badge) badge.style.background = '#f1f5f9';
+  });
+}
+
+function _activatePill(name) {
+  _deactivateAll();
+  const pill = document.getElementById('l1-' + name);
+  if (!pill) return;
+  pill.style.background  = '#eef2ff';
+  pill.style.borderColor = '#6366f1';
+  pill.style.color       = '#4f46e5';
+}
+</script>

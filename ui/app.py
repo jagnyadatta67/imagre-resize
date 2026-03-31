@@ -55,6 +55,16 @@ AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
 TARGET_CONTAINER   = os.getenv("TARGET_CONTAINER", "lifestyle-converted")
 
+# ── Category group metadata (L1 pill labels + emoji) ─────────
+_GROUP_META: dict[str, dict] = {
+    "men":      {"label": "Men",      "emoji": "👔"},
+    "women":    {"label": "Women",    "emoji": "👗"},
+    "kids":     {"label": "Kids",     "emoji": "👦"},
+    "footwear": {"label": "Footwear", "emoji": "👟"},
+    "beauty":   {"label": "Beauty",   "emoji": "💄"},
+    "bags":     {"label": "Bags",     "emoji": "👜"},
+}
+
 # ── Cloudflare CDN — container → CF domain mapping ────────────
 # Reverse of DOMAIN_TO_CONTAINER in config.py.
 # Processed images are served via CF Image Resizing — zero Azure egress.
@@ -68,6 +78,11 @@ _CF_DOMAIN_MAP: dict[str, str] = {
 
 app = Flask(__name__)
 app.secret_key = "pipeline-ui-secret"
+
+# Expose GROUP_META as a JS-safe dict for all templates
+app.jinja_env.globals["_GROUP_META_JS"] = json.dumps(
+    {k: {"label": v["label"]} for k, v in _GROUP_META.items()}
+)
 
 
 # ── DB connection pool ────────────────────────────────────────
@@ -240,6 +255,42 @@ def from_json_filter(val) -> list:
 
 # ── Data helpers ──────────────────────────────────────────────
 
+def _get_category_groups(cur) -> list[dict]:
+    """
+    Return L1 group pills: aggregate sku_results by the prefix before the first '-'.
+    e.g. 'beauty-face' → group 'beauty'.
+    Ordered by a fixed display order (defined in _GROUP_META), unknowns go last.
+    """
+    cur.execute("""
+        SELECT
+            LOWER(SUBSTRING_INDEX(TRIM(COALESCE(category,'')), '-', 1)) AS grp,
+            COUNT(*)                                                      AS total,
+            SUM(status IN ('done','skipped'))                             AS passed,
+            SUM(status = 'failed')                                        AS failed
+        FROM  sku_results
+        WHERE category IS NOT NULL AND category != ''
+        GROUP BY grp
+        HAVING grp != ''
+        ORDER BY grp
+    """)
+    rows   = cur.fetchall()
+    order  = list(_GROUP_META.keys())
+    groups = []
+    for row in rows:
+        meta = _GROUP_META.get(row["grp"], {"label": row["grp"].title(), "emoji": "🏷️"})
+        groups.append({
+            "name":   row["grp"],
+            "label":  meta["label"],
+            "emoji":  meta["emoji"],
+            "total":  int(row["total"]  or 0),
+            "passed": int(row["passed"] or 0),
+            "failed": int(row["failed"] or 0),
+        })
+    # Sort by fixed order, unknowns at the end
+    groups.sort(key=lambda g: order.index(g["name"]) if g["name"] in order else 999)
+    return groups
+
+
 def _get_stats(cur) -> dict:
     cur.execute("""
         SELECT
@@ -395,9 +446,10 @@ def index():
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
-        stats       = _get_stats(cur)
-        recent_runs = _get_recent_runs(cur)
-        failed_skus = _get_failed_skus(cur)
+        stats            = _get_stats(cur)
+        recent_runs      = _get_recent_runs(cur)
+        failed_skus      = _get_failed_skus(cur)
+        category_groups  = _get_category_groups(cur)
 
         business_results    = _build_business_results(cur, bq) if bq else []
         dev_sku, dev_images = _build_dev_sku(cur, dq) if dq else (None, [])
@@ -410,6 +462,7 @@ def index():
         stats            = stats,
         recent_runs      = recent_runs,
         failed_skus      = failed_skus,
+        category_groups  = category_groups,
         business_results = business_results,
         bq               = bq,
         dev_sku          = dev_sku,
@@ -464,6 +517,7 @@ def api_run_skus(run_id: str):
 @app.route("/skus")
 def sku_list():
     category = request.args.get("category", "").strip().lower()
+    group    = request.args.get("group",    "").strip().lower()   # L1 "View All" filter
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (ValueError, TypeError):
@@ -476,9 +530,10 @@ def sku_list():
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
-        if not category:
-            # ── Level 1: Category grid ────────────────────────
-            # COALESCE groups NULL rows under "uncategorized" for backward compat
+        category_groups = _get_category_groups(cur)
+
+        if not category and not group:
+            # ── Level 0: Full category grid ───────────────────
             cur.execute("""
                 SELECT
                     COALESCE(NULLIF(category,''), 'uncategorized') AS category,
@@ -500,7 +555,49 @@ def sku_list():
             for cat in categories:
                 raw = cat.get("sample_azure_url") or ""
                 cat["thumb_url"] = make_cf_url(raw) or make_sas_url(raw)
-            return render_template("skus.html", categories=categories, category=None)
+            return render_template(
+                "skus.html",
+                categories      = categories,
+                category        = None,
+                group           = None,
+                category_groups = category_groups,
+            )
+
+        if group and not category:
+            # ── Level 1 → "View All {group}" subcategory grid ─
+            # Shows only subcategory cards that belong to this group prefix.
+            meta       = _GROUP_META.get(group, {"label": group.title(), "emoji": "🏷️"})
+            group_label = meta["label"]
+            cur.execute("""
+                SELECT
+                    COALESCE(NULLIF(category,''), 'uncategorized') AS category,
+                    COUNT(*)                                        AS total,
+                    SUM(status IN ('done','skipped'))               AS passed,
+                    SUM(status = 'failed')                          AS failed,
+                    COALESCE(SUM(azure_uploaded), 0)               AS total_images,
+                    JSON_UNQUOTE(JSON_EXTRACT(
+                        COALESCE(
+                            MAX(CASE WHEN status='done'    THEN azure_urls END),
+                            MAX(CASE WHEN status='skipped' THEN azure_urls END)
+                        ), '$[0]'
+                    ))                                              AS sample_azure_url
+                FROM  sku_results
+                WHERE LOWER(SUBSTRING_INDEX(TRIM(COALESCE(category,'')), '-', 1)) = %s
+                GROUP BY category
+                ORDER BY category
+            """, (group,))
+            categories = cur.fetchall()
+            for cat in categories:
+                raw = cat.get("sample_azure_url") or ""
+                cat["thumb_url"] = make_cf_url(raw) or make_sas_url(raw)
+            return render_template(
+                "skus.html",
+                categories      = categories,
+                category        = None,
+                group           = group,
+                group_label     = group_label,
+                category_groups = category_groups,
+            )
 
         # ── Level 2: SKU list for selected category ───────────
         # "uncategorized" matches rows where category IS NULL or empty
@@ -570,16 +667,62 @@ def sku_list():
 
     return render_template(
         "skus.html",
-        categories  = None,
-        category    = category,
-        skus        = skus,
-        page        = page,
-        total_pages = total_pages,
-        total       = total,
-        per_page    = per_page,
-        status      = status,
-        q           = q,
+        categories      = None,
+        category        = category,
+        group           = group,
+        skus            = skus,
+        page            = page,
+        total_pages     = total_pages,
+        total           = total,
+        per_page        = per_page,
+        status          = status,
+        q               = q,
+        category_groups = category_groups,
     )
+
+
+# ── Category group L2 subcategories (AJAX) ───────────────────
+
+@app.route("/api/category-group/<group_name>")
+def api_category_group(group_name: str):
+    """
+    Return subcategories + counts for a given L1 group name.
+    e.g. /api/category-group/beauty  →
+      [{ category:'beauty-face', label:'Face', total:874, passed:850, failed:24 }, ...]
+    """
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT
+                category,
+                COUNT(*)                           AS total,
+                SUM(status IN ('done','skipped'))   AS passed,
+                SUM(status = 'failed')              AS failed
+            FROM  sku_results
+            WHERE LOWER(SUBSTRING_INDEX(TRIM(COALESCE(category,'')), '-', 1)) = %s
+              AND category IS NOT NULL AND category != ''
+            GROUP BY category
+            ORDER BY category
+        """, (group_name.lower(),))
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+
+    result = []
+    for r in rows:
+        cat = r["category"] or ""
+        # Label = everything after the first '-', title-cased
+        label = cat.split("-", 1)[1].replace("-", " ").title() if "-" in cat else cat.title()
+        result.append({
+            "category": cat,
+            "label":    label,
+            "total":    int(r["total"]  or 0),
+            "passed":   int(r["passed"] or 0),
+            "failed":   int(r["failed"] or 0),
+        })
+    return jsonify(result)
 
 
 # ── Per-image manual reprocess ────────────────────────────────
