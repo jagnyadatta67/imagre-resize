@@ -156,13 +156,13 @@ def _build_transformation(
         logger.info(f"[{filename}] Cloudinary FILL  (center crop)")
     elif pad_mode == "no":
         transformation = [{"width": TARGET_W, "height": TARGET_H,
-                           "crop": "fill", "gravity": "auto:subject"}]
+                           "crop": "fill", "gravity": "auto"}]
         td = f"engine:cloudinary,crop:fill,gravity:auto,w:{TARGET_W},h:{TARGET_H}"
         logger.info(f"[{filename}] Cloudinary FILL  (no pad)")
     else:
         bg = _pad_bg(pad_mode)
         transformation = [{"width": TARGET_W, "height": TARGET_H,
-                           "crop": "auto_pad",  "gravity": "auto:subject",
+                           "crop": "pad",  "gravity": "center",
                            "background":   bg}]
         td = f"engine:cloudinary,crop:auto_pad,gravity:auto:subject,bg:{bg},w:{TARGET_W},h:{TARGET_H}"
         logger.info(f"[{filename}] Cloudinary PAD  bg={bg}")
