@@ -148,7 +148,7 @@ def process_sku(
 
     # ── Skip if already done (and not forced reprocess) ──────
     existing = db.get_sku_status(sku_id)
-    if existing and existing["status"] == "done" and not reprocess:
+    if existing and existing["status"] in ("done", "skipped") and not reprocess:
         sku_log.info(f"SKIP {sku_id}  (already done — add reprocess=true in CSV to override)")
         db.mark_skipped(run_id, sku_id, category=category)
         return "skipped"
