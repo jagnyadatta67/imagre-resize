@@ -473,7 +473,7 @@ def mark_skipped(run_id: str, sku_id: str, category: Optional[str] = None) -> No
         VALUES (%s, %s, 'skipped', %s, %s)
         ON DUPLICATE KEY UPDATE
             run_id            = VALUES(run_id),
-            status            = 'skipped',
+            status            = IF(status = 'done', 'done', 'skipped'),
             category          = COALESCE(VALUES(category), category),
             last_processed_at = VALUES(last_processed_at)
     """, (run_id, sku_id, category, now))
