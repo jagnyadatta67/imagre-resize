@@ -32,6 +32,9 @@ TARGET_RATIO        = TARGET_W / TARGET_H
 JPEG_QUALITY        = int(os.getenv("JPEG_QUALITY", "90"))
 TEXT_THRESHOLD      = int(os.getenv("TEXT_THRESHOLD", "40"))
 
+# ── Upload users (comma-separated list for manual upload dropdown) ──
+UPLOAD_USERS        = [u.strip() for u in os.getenv("UPLOAD_USERS", "").split(",") if u.strip()]
+
 # ── Pipeline behaviour ────────────────────────────────────────
 BULK_WORKERS        = int(os.getenv("BULK_WORKERS", "10"))
 FULL_AI             = os.getenv("FULL_AI", "false").lower() == "true"

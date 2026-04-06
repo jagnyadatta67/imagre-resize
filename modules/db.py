@@ -199,6 +199,7 @@ def init_db() -> None:
         "ALTER TABLE image_results ADD COLUMN vision_data VARCHAR(500)",
         "ALTER TABLE image_results ADD COLUMN transform_data VARCHAR(500)",
         "ALTER TABLE image_results ADD COLUMN reprocess_transform_data VARCHAR(500)",
+        "ALTER TABLE image_results ADD COLUMN uploaded_by VARCHAR(100) NULL",
     ]:
         try:
             cur.execute(col_sql)

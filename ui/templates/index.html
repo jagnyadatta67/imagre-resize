@@ -94,6 +94,19 @@
           Processing failed — contact tech team
         </span>
         {% endif %}
+        {% if show_upload_all %}
+        <button
+          data-sku="{{ sku.sku_id }}"
+          onclick="openUploadAllModal(this)"
+          style="margin-left:auto; font-size:.78rem; padding:5px 14px; border-radius:8px;
+                 border:1px solid #6ee7b7; background:#ecfdf5; color:#059669;
+                 cursor:pointer; transition:all .15s; font-weight:600;"
+          onmouseover="this.style.background='#d1fae5';this.style.borderColor='#34d399';"
+          onmouseout="this.style.background='#ecfdf5';this.style.borderColor='#6ee7b7';"
+        >
+          ⬆ Upload All Images
+        </button>
+        {% endif %}
       </div>
 
       {% if sku.images %}
@@ -145,7 +158,7 @@
               <span style="font-size:.68rem; color:#d1d5db;">No original available</span>
             </div>
             {% endif %}
-            <!-- Reprocess button -->
+            <!-- Reprocess + Upload buttons -->
             {% if show_reprocess %}
             <button
               data-sku="{{ sku.sku_id }}"
@@ -153,11 +166,23 @@
               onclick="openReprocessModal(this)"
               style="width:100%; font-size:.68rem; padding:4px 0; border-radius:6px;
                      border:1px solid #e2e8f0; background:#f8fafc; color:#64748b;
-                     cursor:pointer; transition:all .15s; font-weight:500;"
+                     cursor:pointer; transition:all .15s; font-weight:500; margin-bottom:4px;"
               onmouseover="this.style.background='#ede9fe';this.style.color='#7c3aed';this.style.borderColor='#c4b5fd';"
               onmouseout="this.style.background='#f8fafc';this.style.color='#64748b';this.style.borderColor='#e2e8f0';"
             >
               🔄 Reprocess
+            </button>
+            <button
+              data-sku="{{ sku.sku_id }}"
+              data-filename="{{ img.filename }}"
+              onclick="openUploadModal(this)"
+              style="width:100%; font-size:.68rem; padding:4px 0; border-radius:6px;
+                     border:1px solid #e2e8f0; background:#f8fafc; color:#64748b;
+                     cursor:pointer; transition:all .15s; font-weight:500;"
+              onmouseover="this.style.background='#ecfdf5';this.style.color='#059669';this.style.borderColor='#6ee7b7';"
+              onmouseout="this.style.background='#f8fafc';this.style.color='#64748b';this.style.borderColor='#e2e8f0';"
+            >
+              ⬆ Upload
             </button>
             {% endif %}
           </div>
@@ -755,6 +780,131 @@ FAILED_SKU_ID,,true</pre>
 
 
 <!-- ════════════════════════════════════════════════════════════
+     PER-IMAGE UPLOAD MODAL
+     ════════════════════════════════════════════════════════════ -->
+<div id="up-overlay" onclick="closeUploadModal()" style="
+  display:none; position:fixed; inset:0; z-index:10000;
+  background:rgba(0,0,0,0.62); align-items:center; justify-content:center;">
+
+  <div onclick="event.stopPropagation()" style="
+    background:#fff; border-radius:18px; padding:28px 30px;
+    width:100%; max-width:420px; margin:16px;
+    box-shadow:0 24px 80px rgba(0,0,0,0.32);">
+
+    <!-- Header -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+      <div>
+        <div style="font-size:1rem; font-weight:700; color:#1e293b; margin-bottom:4px;">⬆ Upload Replacement Image</div>
+        <div id="up-filename-label" style="font-size:.72rem; font-family:monospace; color:#059669; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+      </div>
+      <button onclick="closeUploadModal()" style="background:none; border:none; font-size:1.4rem; color:#94a3b8; cursor:pointer; line-height:1; padding:0; margin-left:12px;">✕</button>
+    </div>
+
+    <!-- Uploaded by -->
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:.78rem; font-weight:600; color:#475569; margin-bottom:6px;">Uploaded by <span style="color:#ef4444;">*</span></label>
+      <select id="up-user" style="width:100%; border:1.5px solid #e2e8f0; border-radius:8px; padding:9px 12px; font-size:.88rem; color:#1e293b; outline:none; background:#fff; cursor:pointer;"
+        onfocus="this.style.borderColor='#34d399'" onblur="this.style.borderColor='#e2e8f0'">
+        <option value="">— select your name —</option>
+        {% for u in upload_users %}
+        <option value="{{ u }}">{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- File picker -->
+    <div style="margin-bottom:20px;">
+      <label style="display:block; font-size:.78rem; font-weight:600; color:#475569; margin-bottom:6px;">Replacement image file <span style="color:#ef4444;">*</span></label>
+      <input id="up-file" type="file" accept="image/*"
+        style="width:100%; border:1.5px dashed #e2e8f0; border-radius:8px; padding:10px 12px;
+               font-size:.83rem; color:#475569; cursor:pointer; background:#f8fafc;"
+        onfocus="this.style.borderColor='#34d399'" onblur="this.style.borderColor='#e2e8f0'" />
+      <div style="font-size:.7rem; color:#94a3b8; margin-top:5px;">File will be saved as <span id="up-dest-name" style="font-family:monospace; color:#059669;"></span></div>
+    </div>
+
+    <!-- Submit -->
+    <button id="up-submit" onclick="submitUpload()" style="
+      width:100%; padding:13px; border-radius:10px; border:none;
+      background:#059669; color:#fff; font-size:.9rem; font-weight:600;
+      cursor:pointer; transition:opacity .15s;">
+      Upload Image
+    </button>
+
+    <!-- Status -->
+    <div id="up-status" style="display:none; margin-top:14px; text-align:center;">
+      <div style="font-size:1.4rem; margin-bottom:6px;">⏳</div>
+      <div style="font-size:.83rem; color:#64748b;">Uploading to Azure…</div>
+    </div>
+
+    <!-- Result -->
+    <div id="up-result" style="display:none; margin-top:14px;">
+      <div id="up-result-inner"></div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
+     SKU-LEVEL UPLOAD ALL MODAL
+     ════════════════════════════════════════════════════════════ -->
+<div id="ua-overlay" onclick="closeUploadAllModal()" style="
+  display:none; position:fixed; inset:0; z-index:10000;
+  background:rgba(0,0,0,0.62); align-items:center; justify-content:center;">
+
+  <div onclick="event.stopPropagation()" style="
+    background:#fff; border-radius:18px; padding:28px 30px;
+    width:100%; max-width:680px; margin:16px; max-height:88vh; overflow-y:auto;
+    box-shadow:0 24px 80px rgba(0,0,0,0.32);">
+
+    <!-- Header -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+      <div>
+        <div style="font-size:1rem; font-weight:700; color:#1e293b; margin-bottom:4px;">⬆ Upload All Images</div>
+        <div id="ua-sku-label" style="font-size:.72rem; font-family:monospace; color:#059669;"></div>
+      </div>
+      <button onclick="closeUploadAllModal()" style="background:none; border:none; font-size:1.4rem; color:#94a3b8; cursor:pointer; line-height:1; padding:0; margin-left:12px;">✕</button>
+    </div>
+
+    <!-- Uploaded by -->
+    <div style="margin-bottom:20px;">
+      <label style="display:block; font-size:.78rem; font-weight:600; color:#475569; margin-bottom:6px;">Uploaded by <span style="color:#ef4444;">*</span></label>
+      <select id="ua-user" style="width:100%; border:1.5px solid #e2e8f0; border-radius:8px; padding:9px 12px; font-size:.88rem; color:#1e293b; outline:none; background:#fff; cursor:pointer;"
+        onfocus="this.style.borderColor='#34d399'" onblur="this.style.borderColor='#e2e8f0'">
+        <option value="">— select your name —</option>
+        {% for u in upload_users %}
+        <option value="{{ u }}">{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Image slots (built dynamically by JS) -->
+    <div id="ua-slots" style="display:flex; flex-direction:column; gap:12px; margin-bottom:20px;"></div>
+
+    <!-- Submit -->
+    <button id="ua-submit" onclick="submitUploadAll()" style="
+      width:100%; padding:13px; border-radius:10px; border:none;
+      background:#059669; color:#fff; font-size:.9rem; font-weight:600;
+      cursor:pointer; transition:opacity .15s;">
+      Upload Selected Images
+    </button>
+
+    <!-- Status -->
+    <div id="ua-status" style="display:none; margin-top:14px; text-align:center;">
+      <div style="font-size:1.4rem; margin-bottom:6px;">⏳</div>
+      <div style="font-size:.83rem; color:#64748b;">Uploading images to Azure…</div>
+    </div>
+
+    <!-- Result -->
+    <div id="ua-result" style="display:none; margin-top:14px;">
+      <div id="ua-result-inner"></div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
      LIGHTBOX
      ════════════════════════════════════════════════════════════ -->
 <div id="biz-lightbox" onclick="closeLightbox()" style="
@@ -944,16 +1094,298 @@ function lbSetMode(mode) {
   }
 }
 
-// ESC — close whichever modal is visible (reprocess takes priority)
+// ESC — close whichever modal is visible
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (document.getElementById('rp-overlay').style.display !== 'none') {
       closeReprocessModal();
+    } else if (document.getElementById('up-overlay').style.display !== 'none') {
+      closeUploadModal();
+    } else if (document.getElementById('ua-overlay').style.display !== 'none') {
+      closeUploadAllModal();
     } else {
       closeLightbox();
     }
   }
 });
+
+
+// ════════════════════════════════════════════════════════════
+// PER-IMAGE UPLOAD MODAL
+// ════════════════════════════════════════════════════════════
+
+let upSku      = '';
+let upFilename = '';
+let upCardImg  = null;
+
+function openUploadModal(btn) {
+  upSku      = btn.dataset.sku      || '';
+  upFilename = btn.dataset.filename || '';
+  upCardImg  = btn.closest('.img-card') ? btn.closest('.img-card').querySelector('.biz-img') : null;
+
+  document.getElementById('up-filename-label').textContent = upFilename;
+  document.getElementById('up-dest-name').textContent      = upFilename;
+  document.getElementById('up-user').value  = '';
+  document.getElementById('up-file').value  = '';
+  document.getElementById('up-status').style.display = 'none';
+  document.getElementById('up-result').style.display = 'none';
+
+  const btn2 = document.getElementById('up-submit');
+  btn2.disabled      = false;
+  btn2.style.opacity = '1';
+  btn2.textContent   = 'Upload Image';
+
+  document.getElementById('up-overlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeUploadModal() {
+  document.getElementById('up-overlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function submitUpload() {
+  const user = document.getElementById('up-user').value.trim();
+  const file = document.getElementById('up-file').files[0];
+
+  if (!user) {
+    alert('Please select your name before uploading.');
+    return;
+  }
+  if (!file) {
+    alert('Please choose a file to upload.');
+    return;
+  }
+
+  const submitBtn = document.getElementById('up-submit');
+  submitBtn.disabled      = true;
+  submitBtn.style.opacity = '0.55';
+  submitBtn.textContent   = 'Uploading…';
+  document.getElementById('up-status').style.display = 'block';
+  document.getElementById('up-result').style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('sku_id',      upSku);
+  fd.append('filename',    upFilename);
+  fd.append('uploaded_by', user);
+  fd.append('file',        file);
+
+  fetch('/api/upload-image', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('up-status').style.display = 'none';
+      document.getElementById('up-result').style.display = 'block';
+      const inner = document.getElementById('up-result-inner');
+
+      if (data.ok) {
+        inner.innerHTML = `
+          <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px;">
+            <div style="font-weight:700; color:#16a34a; margin-bottom:6px;">✅ Upload successful!</div>
+            <div style="font-size:.78rem; color:#15803d; margin-bottom:10px;">
+              Uploaded by <strong>${data.uploaded_by}</strong>
+            </div>
+            <a href="${data.new_url}" target="_blank" rel="noopener"
+               style="display:inline-block; font-size:.75rem; color:#059669; text-decoration:none;
+                      background:#dcfce7; padding:5px 14px; border-radius:6px;">
+              🔗 View uploaded image
+            </a>
+          </div>`;
+        if (upCardImg && data.new_url) {
+          upCardImg.src = data.new_url;
+          upCardImg.dataset.processed = data.new_url;
+          upCardImg.dataset.mode = 'processed';
+          const card = upCardImg.closest('.img-card');
+          if (card) {
+            card.querySelectorAll('.img-tab-btn').forEach(t => {
+              t.classList.toggle('active', t.dataset.tab === 'processed');
+            });
+          }
+        }
+        submitBtn.disabled      = false;
+        submitBtn.style.opacity = '1';
+        submitBtn.textContent   = 'Upload Again';
+      } else {
+        inner.innerHTML = `
+          <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px;">
+            <div style="font-weight:700; color:#dc2626; margin-bottom:4px;">❌ Upload failed</div>
+            <div style="font-size:.78rem; color:#b91c1c; font-family:monospace;">${data.error || 'Unknown error'}</div>
+          </div>`;
+        submitBtn.disabled      = false;
+        submitBtn.style.opacity = '1';
+        submitBtn.textContent   = 'Retry Upload';
+      }
+    })
+    .catch(err => {
+      document.getElementById('up-status').style.display = 'none';
+      document.getElementById('up-result').style.display = 'block';
+      document.getElementById('up-result-inner').innerHTML = `
+        <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px;">
+          <div style="font-weight:700; color:#dc2626;">❌ Network error</div>
+          <div style="font-size:.78rem; color:#b91c1c; margin-top:4px;">${err.message}</div>
+        </div>`;
+      submitBtn.disabled      = false;
+      submitBtn.style.opacity = '1';
+      submitBtn.textContent   = 'Retry Upload';
+    });
+}
+
+
+// ════════════════════════════════════════════════════════════
+// SKU-LEVEL UPLOAD ALL MODAL
+// ════════════════════════════════════════════════════════════
+
+let uaSku    = '';
+let uaImages = [];   // [{filename, thumb}]
+
+function openUploadAllModal(btn) {
+  uaSku = btn.dataset.sku || '';
+
+  // Collect all image cards from this SKU card
+  const skuCard = btn.closest('.card');
+  uaImages = [];
+  skuCard.querySelectorAll('.img-card').forEach(card => {
+    const rpBtn = card.querySelector('[data-filename]');
+    const img   = card.querySelector('.biz-img');
+    if (rpBtn) {
+      uaImages.push({
+        filename: rpBtn.dataset.filename,
+        thumb:    img ? img.src : '',
+        cardImg:  img,
+      });
+    }
+  });
+
+  document.getElementById('ua-sku-label').textContent = uaSku;
+  document.getElementById('ua-user').value            = '';
+  document.getElementById('ua-status').style.display  = 'none';
+  document.getElementById('ua-result').style.display  = 'none';
+
+  const submitBtn = document.getElementById('ua-submit');
+  submitBtn.disabled      = false;
+  submitBtn.style.opacity = '1';
+  submitBtn.textContent   = 'Upload Selected Images';
+
+  // Build image slots
+  const slots = document.getElementById('ua-slots');
+  slots.innerHTML = '';
+  uaImages.forEach((img, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; align-items:center; gap:12px; padding:10px 12px; background:#f8fafc; border-radius:10px; border:1px solid #e2e8f0;';
+    row.innerHTML = `
+      <img src="${img.thumb}" alt="${img.filename}"
+           style="width:42px; height:56px; object-fit:cover; border-radius:6px; border:1px solid #e2e8f0; flex-shrink:0;"
+           onerror="this.style.display='none'" />
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:.72rem; font-family:monospace; color:#475569; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:5px;" title="${img.filename}">${img.filename}</div>
+        <input type="file" accept="image/*" data-idx="${i}"
+               style="width:100%; font-size:.75rem; color:#64748b; cursor:pointer;" />
+      </div>`;
+    slots.appendChild(row);
+  });
+
+  document.getElementById('ua-overlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+
+function closeUploadAllModal() {
+  document.getElementById('ua-overlay').style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+function submitUploadAll() {
+  const user = document.getElementById('ua-user').value.trim();
+  if (!user) {
+    alert('Please select your name before uploading.');
+    return;
+  }
+
+  const fileInputs = document.querySelectorAll('#ua-slots input[type="file"]');
+  let hasFile = false;
+  fileInputs.forEach(inp => { if (inp.files[0]) hasFile = true; });
+  if (!hasFile) {
+    alert('Please select at least one file to upload.');
+    return;
+  }
+
+  const submitBtn = document.getElementById('ua-submit');
+  submitBtn.disabled      = true;
+  submitBtn.style.opacity = '0.55';
+  submitBtn.textContent   = 'Uploading…';
+  document.getElementById('ua-status').style.display = 'block';
+  document.getElementById('ua-result').style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('sku_id',      uaSku);
+  fd.append('uploaded_by', user);
+
+  fileInputs.forEach(inp => {
+    if (inp.files[0]) {
+      const idx      = parseInt(inp.dataset.idx, 10);
+      const filename = uaImages[idx].filename;
+      fd.append('file_' + filename, inp.files[0]);
+    }
+  });
+
+  fetch('/api/upload-sku-images', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('ua-status').style.display = 'none';
+      document.getElementById('ua-result').style.display = 'block';
+      const inner = document.getElementById('ua-result-inner');
+
+      const doneCount = (data.results || []).length;
+      const failCount = (data.errors  || []).length;
+
+      let html = '';
+      if (doneCount > 0) {
+        html += `<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px; margin-bottom:8px;">
+          <div style="font-weight:700; color:#16a34a; margin-bottom:8px;">✅ ${doneCount} image${doneCount !== 1 ? 's' : ''} uploaded successfully</div>`;
+        data.results.forEach(r => {
+          html += `<div style="display:flex; align-items:center; justify-content:space-between; font-size:.75rem; margin-bottom:4px;">
+            <span style="font-family:monospace; color:#15803d;">${r.filename}</span>
+            <a href="${r.new_url}" target="_blank" rel="noopener"
+               style="color:#059669; text-decoration:none; background:#dcfce7; padding:2px 10px; border-radius:5px;">View</a>
+          </div>`;
+          // Update card thumbnail in the grid
+          const imgObj = uaImages.find(x => x.filename === r.filename);
+          if (imgObj && imgObj.cardImg) {
+            imgObj.cardImg.src = r.new_url;
+            imgObj.cardImg.dataset.processed = r.new_url;
+            imgObj.cardImg.dataset.mode = 'processed';
+          }
+        });
+        html += '</div>';
+      }
+      if (failCount > 0) {
+        html += `<div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px;">
+          <div style="font-weight:700; color:#dc2626; margin-bottom:8px;">❌ ${failCount} image${failCount !== 1 ? 's' : ''} failed</div>`;
+        data.errors.forEach(e => {
+          html += `<div style="font-size:.74rem; margin-bottom:4px;">
+            <span style="font-family:monospace; color:#b91c1c;">${e.filename}</span>
+            <span style="color:#64748b; margin-left:6px;">${e.error}</span>
+          </div>`;
+        });
+        html += '</div>';
+      }
+
+      inner.innerHTML = html;
+      submitBtn.disabled      = false;
+      submitBtn.style.opacity = '1';
+      submitBtn.textContent   = 'Upload Again';
+    })
+    .catch(err => {
+      document.getElementById('ua-status').style.display = 'none';
+      document.getElementById('ua-result').style.display = 'block';
+      document.getElementById('ua-result-inner').innerHTML = `
+        <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px;">
+          <div style="font-weight:700; color:#dc2626;">❌ Network error</div>
+          <div style="font-size:.78rem; color:#b91c1c; margin-top:4px;">${err.message}</div>
+        </div>`;
+      submitBtn.disabled      = false;
+      submitBtn.style.opacity = '1';
+      submitBtn.textContent   = 'Retry Upload';
+    });
+}
 
 // ── Copy text to clipboard ────────────────────────────────────
 function copyText(text, btn) {

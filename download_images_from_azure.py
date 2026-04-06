@@ -37,7 +37,7 @@ load_dotenv()
 
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "lmgonlinemedia")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
-BLOB_PREFIX        = "max-new/"          # folder inside each container
+BLOB_PREFIX        = "lifestyle/"          # folder inside each container
 
 logging.basicConfig(
     level=logging.INFO,

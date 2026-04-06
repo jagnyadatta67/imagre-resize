@@ -54,6 +54,7 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
 TARGET_CONTAINER   = os.getenv("TARGET_CONTAINER", "lifestyle-converted")
+UPLOAD_USERS       = [u.strip() for u in os.getenv("UPLOAD_USERS", "").split(",") if u.strip()]
 
 # ── Category group metadata (L1 pill labels + emoji) ─────────
 _GROUP_META: dict[str, dict] = {
@@ -78,6 +79,7 @@ _CF_DOMAIN_MAP: dict[str, str] = {
 
 app = Flask(__name__)
 app.secret_key = "pipeline-ui-secret"
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB max upload
 
 # Expose GROUP_META as a JS-safe dict for all templates
 app.jinja_env.globals["_GROUP_META_JS"] = json.dumps(
@@ -441,7 +443,8 @@ def _build_dev_sku(cur, query: str):
 def index():
     bq = request.args.get("bq", "").strip()   # business search query
     dq = request.args.get("dq", "").strip()   # developer SKU search query
-    show_reprocess = request.args.get("re") == "1"
+    show_reprocess  = request.args.get("re")  == "1"
+    show_upload_all = show_reprocess and request.args.get("all") == "1"
 
     db  = get_db()
     cur = db.cursor(dictionary=True)
@@ -469,6 +472,8 @@ def index():
         dev_images       = dev_images,
         dq               = dq,
         show_reprocess   = show_reprocess,
+        show_upload_all  = show_upload_all,
+        upload_users     = UPLOAD_USERS,
     )
 
 
@@ -871,6 +876,214 @@ def api_reprocess_image():
         except Exception:
             pass
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# ── Per-image manual upload ───────────────────────────────────
+
+@app.route("/api/upload-image", methods=["POST"])
+def api_upload_image():
+    """
+    Upload a replacement image for a single processed file.
+
+    POST multipart/form-data:
+      sku_id, filename, uploaded_by, file (binary)
+
+    Flow:
+      1. Validate inputs and uploaded_by against UPLOAD_USERS
+      2. Fetch container_name from sku_results
+      3. Upload raw bytes to {container}/{TARGET_CONTAINER}/{filename} (overwrite)
+      4. Insert audit row into image_results (method='manual_upload', uploaded_by=…)
+      5. Sync reprocess_count across all rows for this SKU
+      6. Return { ok, new_url, reprocess_count }
+    """
+    sku_id      = request.form.get("sku_id",      "").strip()
+    filename    = request.form.get("filename",    "").strip()
+    uploaded_by = request.form.get("uploaded_by", "").strip()
+    file        = request.files.get("file")
+
+    if not sku_id or not filename:
+        return jsonify({"ok": False, "error": "sku_id and filename are required"}), 400
+    if not uploaded_by:
+        return jsonify({"ok": False, "error": "uploaded_by is required"}), 400
+    if UPLOAD_USERS and uploaded_by not in UPLOAD_USERS:
+        return jsonify({"ok": False, "error": "uploaded_by is not a recognised user"}), 400
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "No file provided"}), 400
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT container_name FROM sku_results WHERE sku_id = %s", (sku_id,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        db.close()
+
+    if not row or not row.get("container_name"):
+        return jsonify({"ok": False, "error": f"No DB record for SKU '{sku_id}'"}), 404
+
+    container_name = row["container_name"]
+
+    try:
+        image_bytes = file.read()
+        azure_url   = _azure.upload_to_newc(filename, image_bytes, container_name)
+
+        db2  = get_db()
+        cur2 = db2.cursor(dictionary=True)
+        try:
+            cur2.execute("""
+                SELECT COALESCE(MAX(reprocess_count), 0) AS max_count
+                FROM   image_results WHERE sku_id = %s
+            """, (sku_id,))
+            reprocess_count = (cur2.fetchone()["max_count"] or 0) + 1
+
+            cur2.execute("""
+                INSERT INTO image_results
+                    (run_id, sku_id, blob_name, filename, method,
+                     azure_url, status, processed_at, reprocess_count, uploaded_by)
+                VALUES (%s, %s, %s, %s, 'manual_upload', %s, 'done', %s, %s, %s)
+            """, (
+                "manual-upload", sku_id, f"{TARGET_CONTAINER}/{filename}",
+                filename, azure_url, datetime.now(), reprocess_count, uploaded_by,
+            ))
+            cur2.execute("""
+                UPDATE image_results SET reprocess_count = %s WHERE sku_id = %s
+            """, (reprocess_count, sku_id))
+            db2.commit()
+        finally:
+            cur2.close()
+            db2.close()
+
+        base_url = make_cf_url(azure_url) or make_sas_url(azure_url)
+        sep      = "&" if "?" in base_url else "?"
+        new_url  = f"{base_url}{sep}v={reprocess_count}"
+        return jsonify({
+            "ok":              True,
+            "filename":        filename,
+            "new_url":         new_url,
+            "reprocess_count": reprocess_count,
+            "uploaded_by":     uploaded_by,
+        })
+
+    except Exception as exc:
+        logging.getLogger("upload").exception("upload-image failed  sku=%s  file=%s", sku_id, filename)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# ── SKU-level bulk upload ─────────────────────────────────────
+
+@app.route("/api/upload-sku-images", methods=["POST"])
+def api_upload_sku_images():
+    """
+    Upload replacement images for multiple files in one SKU at once.
+
+    POST multipart/form-data:
+      sku_id, uploaded_by,
+      file_{filename}  — one entry per image (key = "file_" + original filename)
+
+    Each uploaded file replaces {container}/{TARGET_CONTAINER}/{filename} in Azure.
+    All inserted rows share the same incremented reprocess_count.
+    Returns { ok, results: [{filename, ok, new_url}], errors: [{filename, error}] }
+    """
+    sku_id      = request.form.get("sku_id",      "").strip()
+    uploaded_by = request.form.get("uploaded_by", "").strip()
+
+    if not sku_id:
+        return jsonify({"ok": False, "error": "sku_id is required"}), 400
+    if not uploaded_by:
+        return jsonify({"ok": False, "error": "uploaded_by is required"}), 400
+    if UPLOAD_USERS and uploaded_by not in UPLOAD_USERS:
+        return jsonify({"ok": False, "error": "uploaded_by is not a recognised user"}), 400
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT container_name FROM sku_results WHERE sku_id = %s", (sku_id,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        db.close()
+
+    if not row or not row.get("container_name"):
+        return jsonify({"ok": False, "error": f"No DB record for SKU '{sku_id}'"}), 404
+
+    container_name = row["container_name"]
+
+    # Compute next reprocess_count once — shared across all files in this batch
+    db2  = get_db()
+    cur2 = db2.cursor(dictionary=True)
+    try:
+        cur2.execute("""
+            SELECT COALESCE(MAX(reprocess_count), 0) AS max_count
+            FROM   image_results WHERE sku_id = %s
+        """, (sku_id,))
+        reprocess_count = (cur2.fetchone()["max_count"] or 0) + 1
+    finally:
+        cur2.close()
+        db2.close()
+
+    results = []
+    errors  = []
+
+    for key, file in request.files.items():
+        # Keys sent by the JS are "file_{filename}"
+        if not key.startswith("file_") or not file.filename:
+            continue
+        filename = key[len("file_"):]
+
+        try:
+            image_bytes = file.read()
+            azure_url   = _azure.upload_to_newc(filename, image_bytes, container_name)
+
+            db3  = get_db()
+            cur3 = db3.cursor(dictionary=True)
+            try:
+                cur3.execute("""
+                    INSERT INTO image_results
+                        (run_id, sku_id, blob_name, filename, method,
+                         azure_url, status, processed_at, reprocess_count, uploaded_by)
+                    VALUES (%s, %s, %s, %s, 'manual_upload', %s, 'done', %s, %s, %s)
+                """, (
+                    "manual-upload", sku_id, f"{TARGET_CONTAINER}/{filename}",
+                    filename, azure_url, datetime.now(), reprocess_count, uploaded_by,
+                ))
+                db3.commit()
+            finally:
+                cur3.close()
+                db3.close()
+
+            base_url = make_cf_url(azure_url) or make_sas_url(azure_url)
+            sep      = "&" if "?" in base_url else "?"
+            results.append({"filename": filename, "ok": True,
+                            "new_url": f"{base_url}{sep}v={reprocess_count}"})
+
+        except Exception as exc:
+            logging.getLogger("upload").exception(
+                "upload-sku-images failed  sku=%s  file=%s", sku_id, filename)
+            errors.append({"filename": filename, "error": str(exc)})
+
+    if not results and not errors:
+        return jsonify({"ok": False, "error": "No files received"}), 400
+
+    # Sync all existing rows for this SKU to the same reprocess_count
+    if results:
+        db4  = get_db()
+        cur4 = db4.cursor(dictionary=True)
+        try:
+            cur4.execute("""
+                UPDATE image_results SET reprocess_count = %s WHERE sku_id = %s
+            """, (reprocess_count, sku_id))
+            db4.commit()
+        finally:
+            cur4.close()
+            db4.close()
+
+    return jsonify({
+        "ok":              len(errors) == 0,
+        "results":         results,
+        "errors":          errors,
+        "reprocess_count": reprocess_count,
+    })
 
 
 # ── Legacy redirect ───────────────────────────────────────────
