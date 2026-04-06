@@ -20,3 +20,5 @@ Woment_input_csv
 
 # OS
 .DS_Store
+
+MONGO_CSV/

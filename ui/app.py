@@ -28,7 +28,8 @@ import mysql.connector
 from mysql.connector import pooling as _mysql_pooling
 from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
 from markupsafe import Markup
 
 # ── Load .env from parent directory ──────────────────────────
@@ -54,7 +55,8 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
 TARGET_CONTAINER   = os.getenv("TARGET_CONTAINER", "lifestyle-converted")
-UPLOAD_USERS       = [u.strip() for u in os.getenv("UPLOAD_USERS", "").split(",") if u.strip()]
+# UPLOAD_USERS kept as a no-op reference — no longer used for validation (login handles auth)
+UPLOAD_USERS: list[str] = []
 
 # ── Category group metadata (L1 pill labels + emoji) ─────────
 _GROUP_META: dict[str, dict] = {
@@ -78,7 +80,7 @@ _CF_DOMAIN_MAP: dict[str, str] = {
 
 
 app = Flask(__name__)
-app.secret_key = "pipeline-ui-secret"
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "pipeline-ui-secret-CHANGE-ME")
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB max upload
 
 # Expose GROUP_META as a JS-safe dict for all templates
@@ -116,6 +118,36 @@ def _get_pool() -> _mysql_pooling.MySQLConnectionPool:
 def get_db() -> mysql.connector.MySQLConnection:
     """Return a pooled connection. Caller must call db.close() to return it."""
     return _get_pool().get_connection()
+
+
+# ── UI auth schema + helpers ──────────────────────────────────
+
+def _ensure_ui_schema() -> None:
+    """Create ui_users table if it doesn't exist (safe to call every startup)."""
+    db  = get_db()
+    cur = db.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS ui_users (
+                id            INT AUTO_INCREMENT PRIMARY KEY,
+                username      VARCHAR(100) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                is_active     TINYINT(1)   NOT NULL DEFAULT 1,
+                created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        db.commit()
+    finally:
+        cur.close()
+        db.close()
+
+
+_ensure_ui_schema()   # runs once at import / startup time
+
+
+def _current_user() -> str | None:
+    """Return the logged-in username from the Flask session, or None."""
+    return session.get("username")
 
 
 # ── Azure SAS helpers ─────────────────────────────────────────
@@ -439,12 +471,64 @@ def _build_dev_sku(cur, query: str):
 
 # ── Routes ────────────────────────────────────────────────────
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """
+    Login page — only required to access ?re=1 (upload/reprocess view).
+    All other pages remain open.
+
+    GET  /login?next=<url>  → render login form
+    POST /login             → verify credentials → redirect to next
+    """
+    next_url = (request.args.get("next") or request.form.get("next") or "/").strip()
+    # Prevent open-redirect: next must be a relative path on this server
+    if not next_url.startswith("/"):
+        next_url = "/"
+    error = None
+
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip().lower()
+        password =  request.form.get("password") or ""
+
+        db  = get_db()
+        cur = db.cursor(dictionary=True)
+        try:
+            cur.execute(
+                "SELECT password_hash FROM ui_users WHERE username = %s AND is_active = 1",
+                (username,)
+            )
+            row = cur.fetchone()
+        finally:
+            cur.close()
+            db.close()
+
+        if row and check_password_hash(row["password_hash"], password):
+            session["username"] = username
+            session.permanent   = True   # default 31-day lifetime
+            return redirect(next_url)
+        error = "Invalid username or password."
+
+    return render_template("login.html", next=next_url, error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
 def index():
     bq = request.args.get("bq", "").strip()   # business search query
     dq = request.args.get("dq", "").strip()   # developer SKU search query
-    show_reprocess  = request.args.get("re")  == "1"
-    show_upload_all = show_reprocess and request.args.get("all") == "1"
+    # ── Auth guard: ?re=1 link triggers login for unauthenticated users ──
+    # Once logged in, buttons appear automatically on every search page.
+    if request.args.get("re") == "1" and not _current_user():
+        return redirect(url_for("login", next=request.url))
+
+    # Reprocess + Upload buttons auto-appear for any logged-in user
+    show_reprocess  = bool(_current_user())
+    show_upload_all = bool(_current_user())
 
     db  = get_db()
     cur = db.cursor(dictionary=True)
@@ -473,7 +557,7 @@ def index():
         dq               = dq,
         show_reprocess   = show_reprocess,
         show_upload_all  = show_upload_all,
-        upload_users     = UPLOAD_USERS,
+        upload_users     = [],            # kept for template compat — dropdown removed
     )
 
 
@@ -748,6 +832,9 @@ def api_reprocess_image():
       5. Insert audit row into image_results
       6. Return { ok, new_url, method, used_cloudinary }
     """
+    if not _current_user():
+        return jsonify({"ok": False, "error": "Authentication required"}), 401
+
     data     = request.get_json(force=True) or {}
     sku_id   = (data.get("sku_id")   or "").strip()
     filename = (data.get("filename") or "").strip()
@@ -808,12 +895,12 @@ def api_reprocess_image():
                 INSERT INTO image_results
                     (run_id, sku_id, blob_name, filename, method,
                      cloudinary_url, azure_url, status, processed_at,
-                     reprocess_count)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'done', %s, %s)
+                     reprocess_count, uploaded_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'done', %s, %s, %s)
             """, (
                 "manual-reprocess", sku_id, blob_name, filename,
                 f"reprocess_{method}", cloudinary_url, azure_url, datetime.now(),
-                reprocess_count,
+                reprocess_count, _current_user(),
             ))
 
             # Sync all rows for this SKU to the same reprocess_count
@@ -863,12 +950,12 @@ def api_reprocess_image():
                 cur3.execute("""
                     INSERT INTO image_results
                         (run_id, sku_id, blob_name, filename, method,
-                         status, error_code, error_msg, processed_at)
-                    VALUES (%s, %s, %s, %s, %s, 'failed', %s, %s, %s)
+                         status, error_code, error_msg, processed_at, uploaded_by)
+                    VALUES (%s, %s, %s, %s, %s, 'failed', %s, %s, %s, %s)
                 """, (
                     "manual-reprocess", sku_id, f"lifestyle/{filename}", filename,
                     f"reprocess_{method}", type(exc).__name__, str(exc)[:2000],
-                    datetime.now(),
+                    datetime.now(), _current_user(),
                 ))
             finally:
                 cur3.close()
@@ -886,27 +973,27 @@ def api_upload_image():
     Upload a replacement image for a single processed file.
 
     POST multipart/form-data:
-      sku_id, filename, uploaded_by, file (binary)
+      sku_id, filename, file (binary)
+      uploaded_by is taken from the Flask session (login required)
 
     Flow:
-      1. Validate inputs and uploaded_by against UPLOAD_USERS
+      1. Verify session login (401 if not authenticated)
       2. Fetch container_name from sku_results
       3. Upload raw bytes to {container}/{TARGET_CONTAINER}/{filename} (overwrite)
       4. Insert audit row into image_results (method='manual_upload', uploaded_by=…)
       5. Sync reprocess_count across all rows for this SKU
       6. Return { ok, new_url, reprocess_count }
     """
-    sku_id      = request.form.get("sku_id",      "").strip()
-    filename    = request.form.get("filename",    "").strip()
-    uploaded_by = request.form.get("uploaded_by", "").strip()
+    if not _current_user():
+        return jsonify({"ok": False, "error": "Authentication required"}), 401
+
+    sku_id      = request.form.get("sku_id",   "").strip()
+    filename    = request.form.get("filename", "").strip()
+    uploaded_by = _current_user()   # always the logged-in session user
     file        = request.files.get("file")
 
     if not sku_id or not filename:
         return jsonify({"ok": False, "error": "sku_id and filename are required"}), 400
-    if not uploaded_by:
-        return jsonify({"ok": False, "error": "uploaded_by is required"}), 400
-    if UPLOAD_USERS and uploaded_by not in UPLOAD_USERS:
-        return jsonify({"ok": False, "error": "uploaded_by is not a recognised user"}), 400
     if not file or not file.filename:
         return jsonify({"ok": False, "error": "No file provided"}), 400
 
@@ -985,15 +1072,14 @@ def api_upload_sku_images():
     All inserted rows share the same incremented reprocess_count.
     Returns { ok, results: [{filename, ok, new_url}], errors: [{filename, error}] }
     """
-    sku_id      = request.form.get("sku_id",      "").strip()
-    uploaded_by = request.form.get("uploaded_by", "").strip()
+    if not _current_user():
+        return jsonify({"ok": False, "error": "Authentication required"}), 401
+
+    sku_id      = request.form.get("sku_id", "").strip()
+    uploaded_by = _current_user()   # always the logged-in session user
 
     if not sku_id:
         return jsonify({"ok": False, "error": "sku_id is required"}), 400
-    if not uploaded_by:
-        return jsonify({"ok": False, "error": "uploaded_by is required"}), 400
-    if UPLOAD_USERS and uploaded_by not in UPLOAD_USERS:
-        return jsonify({"ok": False, "error": "uploaded_by is not a recognised user"}), 400
 
     db  = get_db()
     cur = db.cursor(dictionary=True)

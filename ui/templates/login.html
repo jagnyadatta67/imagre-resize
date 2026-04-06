@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Sign In — SquareShift Image Pipeline</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      background: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+    }
+    .wrap   { width: 100%; max-width: 380px; }
+    .header { text-align: center; margin-bottom: 28px; }
+    .brand  { font-size: .72rem; color: #94a3b8; letter-spacing: .4px; font-weight: 600;
+               text-transform: uppercase; margin-top: 10px; }
+    .card   { background: #fff; border-radius: 16px; border: 1px solid #e2e8f0;
+               padding: 32px 28px; box-shadow: 0 4px 24px rgba(0,0,0,.07); }
+    .card h1 { font-size: 1.15rem; font-weight: 700; color: #1e293b; text-align: center;
+                margin-bottom: 24px; }
+    .error  { background: #fee2e2; border: 1px solid #fca5a5; border-radius: 8px;
+               padding: 10px 14px; font-size: .82rem; color: #b91c1c; margin-bottom: 18px; }
+    .field  { margin-bottom: 16px; }
+    .field label { display: block; font-size: .78rem; font-weight: 600; color: #475569;
+                    margin-bottom: 6px; }
+    .field input { width: 100%; border: 1.5px solid #e2e8f0; border-radius: 8px;
+                    padding: 10px 12px; font-size: .88rem; color: #1e293b; outline: none;
+                    transition: border-color .15s; }
+    .field input:focus { border-color: #6366f1; }
+    .btn-submit {
+      width: 100%; padding: 13px; border-radius: 10px; border: none;
+      background: #4f46e5; color: #fff; font-size: .92rem; font-weight: 600;
+      cursor: pointer; transition: background .15s; margin-top: 8px;
+    }
+    .btn-submit:hover { background: #4338ca; }
+    .footer { text-align: center; margin-top: 18px; font-size: .72rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <!-- Logo / branding -->
+    <div class="header">
+      <img
+        src="https://assets-cloud.landmarkshops.in/website_images/static-pages/brand_exp/brand2images/logos/prod/lifestyle-logo-136x46.svg"
+        alt="Lifestyle"
+        style="height:34px;"
+        onerror="this.style.display='none'"
+      />
+      <div class="brand">SquareShift &mdash; AI Image Transformer</div>
+    </div>
+
+    <!-- Login card -->
+    <div class="card">
+      <h1>Sign in to continue</h1>
+
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+
+      <form method="post" action="/login">
+        <input type="hidden" name="next" value="{{ next }}">
+
+        <div class="field">
+          <label for="username">Username</label>
+          <input id="username" name="username" type="text"
+                 autocomplete="username" autofocus required
+                 placeholder="your username">
+        </div>
+
+        <div class="field" style="margin-bottom:24px;">
+          <label for="password">Password</label>
+          <input id="password" name="password" type="password"
+                 autocomplete="current-password" required
+                 placeholder="••••••••">
+        </div>
+
+        <button type="submit" class="btn-submit">Sign In</button>
+      </form>
+    </div>
+
+    <div class="footer">Internal tool &mdash; contact admin to get access</div>
+
+  </div>
+</body>
+</html>

@@ -100,6 +100,23 @@
       <!-- Spacer -->
       <div style="flex:1;"></div>
 
+      <!-- Logged-in user + logout (only shown when session is active) -->
+      {% if session.get('username') %}
+      <div style="display:flex; align-items:center; gap:10px; margin-right:8px;">
+        <span style="font-size:.78rem; color:#64748b;">
+          👤 <strong style="color:#1e293b;">{{ session.get('username') }}</strong>
+        </span>
+        <a href="/logout"
+           style="font-size:.76rem; font-weight:600; color:#ef4444; text-decoration:none;
+                  padding:5px 12px; border:1px solid #fecaca; border-radius:8px;
+                  background:#fff; transition:all .15s;"
+           onmouseover="this.style.background='#fee2e2';"
+           onmouseout="this.style.background='#fff';">
+          Logout
+        </a>
+      </div>
+      {% endif %}
+
       <!-- View toggle (Developer button hidden by default; visible only via ?dev=1) -->
       <div class="view-pill" id="viewPill">
         <button class="view-btn" id="bizBtn" onclick="setView('business')">
