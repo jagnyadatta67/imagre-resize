@@ -194,7 +194,7 @@ def process_batch(
                 results.append({
                     "color_variant_id": cv_id,
                     "container":        container,
-                    "reprocess":        "",
+                    "reprocess":        "true",
                     "_category":        category,
                 })
 

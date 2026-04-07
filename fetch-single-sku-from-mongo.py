@@ -204,7 +204,7 @@ def process_batch(
         results.append({
             "sku_id":    pid,
             "container": container,
-            "reprocess": "",
+            "reprocess": "true",
             "_category": category,
         })
 
