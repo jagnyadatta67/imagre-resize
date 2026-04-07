@@ -76,6 +76,15 @@
     </div>
   </div>
 
+  <!-- ── Who's viewing this SKU (Business View) ───────────────── -->
+  {% if bq %}
+  <div id="presence-bar" style="display:none; align-items:center; gap:10px; margin-bottom:14px;
+       background:#fef9c3; border:1px solid #fde047; border-radius:10px; padding:10px 16px;">
+    <span style="font-size:.85rem; color:#92400e; font-weight:600;">👀 Also viewing:</span>
+    <div id="presence-avatars" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+  </div>
+  {% endif %}
+
   <!-- ── Results ─────────────────────────────────────────────── -->
   {% if business_results %}
     {% for sku in business_results %}
@@ -1630,7 +1639,7 @@ function loadDevSku(skuId) {
 // PRESENCE — Who's viewing this SKU
 // ════════════════════════════════════════════════════════════
 (function () {
-  const SKU_ID        = {% if dq %}"{{ dq | e }}"{% else %}null{% endif %};
+  const SKU_ID        = {% if dq %}"{{ dq | e }}"{% elif bq %}"{{ bq | e }}"{% else %}null{% endif %};
   const IS_LOGGED_IN  = {{ 'true' if show_reprocess else 'false' }};
   let   _presenceTimer = null;
   let   _heartbeatTimer = null;
