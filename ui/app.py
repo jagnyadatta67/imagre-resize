@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -123,7 +124,7 @@ def get_db() -> mysql.connector.MySQLConnection:
 # ── UI auth schema + helpers ──────────────────────────────────
 
 def _ensure_ui_schema() -> None:
-    """Create ui_users table if it doesn't exist (safe to call every startup)."""
+    """Create UI tables if they don't exist (safe to call every startup)."""
     db  = get_db()
     cur = db.cursor()
     try:
@@ -136,6 +137,19 @@ def _ensure_ui_schema() -> None:
                 created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS sku_comments (
+                id         INT AUTO_INCREMENT PRIMARY KEY,
+                sku_id     VARCHAR(255) NOT NULL,
+                filename   VARCHAR(255) NOT NULL,
+                comment    TEXT         NOT NULL,
+                username   VARCHAR(100) DEFAULT NULL,
+                created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_sku_file (sku_id, filename)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
         db.commit()
     finally:
         cur.close()
@@ -143,6 +157,45 @@ def _ensure_ui_schema() -> None:
 
 
 _ensure_ui_schema()   # runs once at import / startup time
+
+
+# ── Presence store ────────────────────────────────────────────
+# Tracks which users are currently viewing which SKU detail page.
+# Structure: { sku_id: { username: last_seen_datetime } }
+# No DB needed — in-memory, resets on server restart.
+# Timeout: 2 minutes (PRESENCE_TTL_SECONDS)
+
+PRESENCE_TTL_SECONDS = 1200  # 20 minutes
+_presence: dict[str, dict[str, datetime]] = {}
+_presence_lock = threading.Lock()
+
+
+def _presence_update(sku_id: str, username: str) -> None:
+    """Register/refresh a user as actively viewing a SKU."""
+    with _presence_lock:
+        if sku_id not in _presence:
+            _presence[sku_id] = {}
+        _presence[sku_id][username] = datetime.utcnow()
+
+
+def _presence_get(sku_id: str, exclude_user: str | None = None) -> list[str]:
+    """
+    Return list of usernames actively viewing a SKU (within TTL).
+    Optionally exclude the requesting user (so you don't see yourself).
+    Also evicts expired entries.
+    """
+    now     = datetime.utcnow()
+    cutoff  = timedelta(seconds=PRESENCE_TTL_SECONDS)
+    result  = []
+    with _presence_lock:
+        viewers = _presence.get(sku_id, {})
+        expired = [u for u, ts in viewers.items() if (now - ts) > cutoff]
+        for u in expired:
+            del viewers[u]
+        for u, ts in viewers.items():
+            if u != exclude_user:
+                result.append(u)
+    return result
 
 
 def _current_user() -> str | None:
@@ -376,8 +429,23 @@ def _build_business_results(cur, query: str) -> list:
     """, (f"%{query}%",))
     skus = cur.fetchall()
 
+    # ── Fetch QC status for all returned SKUs in one query ────────────────
+    sku_ids   = [s["sku_id"] for s in skus]
+    qc_map: dict[str, dict] = {}
+    if sku_ids:
+        fmt = ",".join(["%s"] * len(sku_ids))
+        cur.execute(f"""
+            SELECT sku_id, username, updated_at
+            FROM   sku_comments
+            WHERE  filename = '__QC__' AND sku_id IN ({fmt})
+        """, sku_ids)
+        for r in cur.fetchall():
+            qc_map[r["sku_id"]] = {"qc_by": r["username"], "qc_at": r["updated_at"]}
+
     results = []
     for sku in skus:
+        sku["qc_by"] = (qc_map.get(sku["sku_id"]) or {}).get("qc_by")
+        sku["qc_at"] = (qc_map.get(sku["sku_id"]) or {}).get("qc_at")
         # ── latest row per filename (for azure_url / status) ──────────────
         cur.execute("""
             SELECT filename, azure_url, status, reprocess_count
@@ -726,7 +794,10 @@ def sku_list():
                                FROM   image_results ir3
                                WHERE  ir3.sku_id = s.sku_id
                            )
-                      AND  ir2.reprocess_count > 0)                 AS reprocessed_count
+                      AND  ir2.reprocess_count > 0)                 AS reprocessed_count,
+                   (SELECT username FROM sku_comments
+                    WHERE  sku_id = s.sku_id AND filename = '__QC__'
+                    LIMIT  1)                                        AS qc_by
             FROM   sku_results s
             {where}
             ORDER  BY s.last_processed_at DESC
@@ -812,6 +883,202 @@ def api_category_group(group_name: str):
             "failed":   int(r["failed"] or 0),
         })
     return jsonify(result)
+
+
+# ── Presence API ──────────────────────────────────────────────
+
+@app.route("/api/presence/heartbeat", methods=["POST"])
+def api_presence_heartbeat():
+    """
+    Called by JS every 30s while a user is viewing a SKU detail page.
+    Body: { "sku_id": "..." }
+    Requires login.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "not_logged_in"}), 401
+
+    data   = request.get_json(silent=True) or {}
+    sku_id = (data.get("sku_id") or "").strip()
+    if not sku_id:
+        return jsonify({"ok": False, "error": "missing sku_id"}), 400
+
+    _presence_update(sku_id, user)
+
+    # Return other active viewers so the UI can update immediately after heartbeat
+    others = _presence_get(sku_id, exclude_user=user)
+    return jsonify({"ok": True, "viewers": others})
+
+
+@app.route("/api/presence/<path:sku_id>")
+def api_presence_get(sku_id: str):
+    """
+    Poll endpoint — returns list of active viewers for a SKU (excluding self).
+    Called every 15s by the SKU detail page JS.
+    """
+    user   = _current_user()
+    others = _presence_get(sku_id, exclude_user=user)
+    return jsonify({"viewers": others})
+
+
+# ── SKU Image Comments ────────────────────────────────────────
+
+@app.route("/api/qc", methods=["POST"])
+def api_qc():
+    """
+    Mark or undo QC Done for a SKU.
+    Body: { "sku_id": "...", "action": "done" | "undo" }
+    Requires login.
+    """
+    user = _current_user()
+    if not user:
+        return jsonify({"ok": False, "error": "not_logged_in"}), 401
+
+    data   = request.get_json(silent=True) or {}
+    sku_id = (data.get("sku_id") or "").strip()
+    action = (data.get("action") or "").strip()
+
+    if not sku_id or action not in ("done", "undo"):
+        return jsonify({"ok": False, "error": "missing sku_id or invalid action"}), 400
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        if action == "done":
+            cur.execute("""
+                INSERT INTO sku_comments (sku_id, filename, comment, username)
+                VALUES (%s, '__QC__', 'QC Done', %s)
+                ON DUPLICATE KEY UPDATE
+                    username   = VALUES(username),
+                    comment    = 'QC Done',
+                    updated_at = CURRENT_TIMESTAMP
+            """, (sku_id, user))
+            db.commit()
+            # Return the saved timestamp
+            cur.execute(
+                "SELECT updated_at FROM sku_comments WHERE sku_id = %s AND filename = '__QC__'",
+                (sku_id,)
+            )
+            row    = cur.fetchone()
+            qc_at  = str(row["updated_at"]) if row else ""
+            return jsonify({"ok": True, "action": "done", "qc_by": user, "qc_at": qc_at})
+        else:
+            cur.execute(
+                "DELETE FROM sku_comments WHERE sku_id = %s AND filename = '__QC__'",
+                (sku_id,)
+            )
+            db.commit()
+            return jsonify({"ok": True, "action": "undo"})
+    finally:
+        cur.close()
+        db.close()
+
+
+@app.route("/api/comment", methods=["POST"])
+def api_save_comment():
+    """
+    Save or update a comment for a specific image within a SKU.
+    Body: { sku_id, filename, comment }
+    No login required — anonymous comments allowed (username = null).
+    """
+    data     = request.get_json(silent=True) or {}
+    sku_id   = (data.get("sku_id")   or "").strip()
+    filename = (data.get("filename") or "").strip()
+    comment  = (data.get("comment")  or "").strip()
+
+    if not sku_id or not filename:
+        return jsonify({"ok": False, "error": "missing sku_id or filename"}), 400
+
+    username = _current_user()   # None if not logged in
+
+    db  = get_db()
+    cur = db.cursor()
+    try:
+        if comment:
+            cur.execute("""
+                INSERT INTO sku_comments (sku_id, filename, comment, username)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    comment    = VALUES(comment),
+                    username   = VALUES(username),
+                    updated_at = CURRENT_TIMESTAMP
+            """, (sku_id, filename, comment, username))
+        else:
+            # Empty comment = delete the row
+            cur.execute(
+                "DELETE FROM sku_comments WHERE sku_id = %s AND filename = %s",
+                (sku_id, filename)
+            )
+        db.commit()
+    finally:
+        cur.close()
+        db.close()
+
+    return jsonify({"ok": True})
+
+
+@app.route("/api/comments/<path:sku_id>")
+def api_get_comments(sku_id: str):
+    """
+    Return all saved comments for a SKU as a dict: { filename: comment }.
+    Called on page load to pre-fill comment boxes.
+    """
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute(
+            "SELECT filename, comment FROM sku_comments WHERE sku_id = %s",
+            (sku_id,)
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+
+    return jsonify({r["filename"]: r["comment"] for r in rows})
+
+
+@app.route("/export/comments")
+def export_comments():
+    """
+    Download all SKU image comments as a CSV file.
+    Columns: sku_id, filename, comment, username, updated_at
+    """
+    import csv
+    import io
+    from flask import Response
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT sku_id, filename, comment, username, updated_at
+            FROM sku_comments
+            ORDER BY updated_at DESC
+        """)
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=["sku_id", "filename", "comment", "username", "updated_at"])
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({
+            "sku_id":     row["sku_id"],
+            "filename":   row["filename"],
+            "comment":    row["comment"],
+            "username":   row["username"] or "",
+            "updated_at": str(row["updated_at"]),
+        })
+
+    output = buf.getvalue()
+    return Response(
+        output,
+        mimetype    = "text/csv",
+        headers     = {"Content-Disposition": "attachment; filename=sku_comments.csv"},
+    )
 
 
 # ── Per-image manual reprocess ────────────────────────────────

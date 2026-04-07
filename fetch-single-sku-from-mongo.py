@@ -195,7 +195,7 @@ def process_batch(
     for doc in docs:
         pid       = doc.get("base_product_id", "")
         version   = doc.get("image_container", "")
-        container = VERSION_TO_CONTAINER.get(version, "in-media")
+        container = VERSION_TO_CONTAINER.get(version, "in-media-uk")
         category  = extract_category(doc.get("categories", []))
 
         log.debug(f"[{pid}] image_container={version!r} → container={container}  category={category}")

@@ -107,6 +107,45 @@
           ⬆ Upload All Images
         </button>
         {% endif %}
+
+        <!-- QC Done button / badge -->
+        <div id="qc-wrap-{{ loop.index }}"
+             data-sku="{{ sku.sku_id }}"
+             style="{% if not show_reprocess %}margin-left:auto;{% endif %} display:flex; align-items:center; gap:8px;">
+          {% if sku.qc_by %}
+          <!-- Already QC'd -->
+          <span id="qc-badge-{{ loop.index }}"
+                style="display:inline-flex; align-items:center; gap:5px; font-size:.75rem;
+                       background:#f0fdf4; border:1px solid #86efac; color:#166534;
+                       padding:4px 12px; border-radius:8px; font-weight:600;">
+            ✅ QC done by <strong>{{ sku.qc_by }}</strong>
+          </span>
+          {% if show_reprocess %}
+          <button id="qc-undo-{{ loop.index }}"
+                  onclick="undoQc({{ loop.index }}, '{{ sku.sku_id }}')"
+                  style="font-size:.7rem; padding:3px 10px; border-radius:6px;
+                         border:1px solid #fca5a5; background:#fff; color:#dc2626;
+                         cursor:pointer; font-weight:500;"
+                  title="Undo QC for this SKU">
+            Undo
+          </button>
+          {% endif %}
+          {% else %}
+          <!-- Not yet QC'd -->
+          {% if show_reprocess %}
+          <button id="qc-btn-{{ loop.index }}"
+                  onclick="openQcModal({{ loop.index }}, '{{ sku.sku_id }}')"
+                  style="font-size:.75rem; padding:5px 14px; border-radius:8px;
+                         border:1px solid #bbf7d0; background:#f0fdf4; color:#15803d;
+                         cursor:pointer; transition:all .15s; font-weight:600;"
+                  onmouseover="this.style.background='#dcfce7';this.style.borderColor='#4ade80';"
+                  onmouseout="this.style.background='#f0fdf4';this.style.borderColor='#bbf7d0';">
+            ✅ QC Done
+          </button>
+          {% endif %}
+          {% endif %}
+        </div>
+
       </div>
 
       {% if sku.images %}
@@ -185,6 +224,28 @@
               ⬆ Upload
             </button>
             {% endif %}
+
+            <!-- 💬 Comment box (always visible) -->
+            <div style="margin-top:6px; position:relative;">
+              <textarea
+                id="cmt-{{ sku.sku_id | replace('.','_') | replace('-','_') }}-{{ img.filename | replace('.','_') | replace('-','_') }}"
+                data-sku="{{ sku.sku_id }}"
+                data-filename="{{ img.filename }}"
+                placeholder="💬 Add note…"
+                rows="2"
+                style="width:100%; font-size:.7rem; border:1px solid #e2e8f0; border-radius:6px;
+                       padding:5px 8px; resize:none; color:#374151; font-family:inherit;
+                       outline:none; box-sizing:border-box; background:#fafafa;"
+                onfocus="this.style.borderColor='#6366f1'; this.style.background='#fff';"
+                onblur="this.style.borderColor='#e2e8f0'; this.style.background='#fafafa'; _saveComment(this)"
+                oninput="_scheduleCommentSave(this)"
+              ></textarea>
+              <span
+                id="cmt-status-{{ sku.sku_id | replace('.','_') | replace('-','_') }}-{{ img.filename | replace('.','_') | replace('-','_') }}"
+                style="position:absolute; bottom:5px; right:7px; font-size:.62rem;
+                       color:#10b981; display:none; pointer-events:none;">✓</span>
+            </div>
+
           </div>
 
         </div>
@@ -490,6 +551,14 @@ FAILED_SKU_ID,,true</pre>
     </div>
 
     {% elif dev_sku %}
+
+    <!-- ── Who's viewing this SKU ────────────────────────── -->
+    <div id="presence-bar" style="display:none; align-items:center; gap:10px; margin-bottom:14px;
+         background:#fef9c3; border:1px solid #fde047; border-radius:10px; padding:10px 16px;">
+      <span style="font-size:.85rem; color:#92400e; font-weight:600;">👀 Also viewing:</span>
+      <div id="presence-avatars" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+    </div>
+
     <!-- ── SKU Summary card ──────────────────────────────── -->
     <div class="card" style="margin-bottom:20px;">
       <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
@@ -556,6 +625,11 @@ FAILED_SKU_ID,,true</pre>
           🖼️ Image Results
           <span style="font-size:.78rem; font-weight:400; color:#94a3b8; margin-left:6px;">({{ dev_images | length }} image{{ 's' if dev_images | length != 1 else '' }})</span>
         </span>
+        <a href="/export/comments" target="_blank"
+           style="font-size:.78rem; color:#6366f1; text-decoration:none; border:1px solid #e0e7ff;
+                  background:#f5f3ff; padding:5px 12px; border-radius:7px; font-weight:500;">
+          ⬇ Export Comments CSV
+        </a>
       </div>
 
       {% if dev_images %}
@@ -571,6 +645,10 @@ FAILED_SKU_ID,,true</pre>
               <th>Error Message</th>
               <th>Processed At</th>
               <th>Links</th>
+              <th style="min-width:180px;">
+                💬 Comment
+                <span style="font-size:.68rem; font-weight:400; color:#94a3b8; display:block;">auto-saved</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -641,6 +719,31 @@ FAILED_SKU_ID,,true</pre>
                     🌤 Cloudinary
                   </a>
                   {% endif %}
+                </div>
+              </td>
+
+              <!-- Comment -->
+              <td>
+                <div style="position:relative;">
+                  <textarea
+                    id="cmt-{{ img.filename | replace('.', '_') | replace('-', '_') }}"
+                    data-sku="{{ dev_sku.sku_id }}"
+                    data-filename="{{ img.filename }}"
+                    placeholder="Add note…"
+                    rows="2"
+                    style="width:100%; min-width:160px; font-size:.75rem; border:1px solid #e2e8f0;
+                           border-radius:6px; padding:6px 8px; resize:vertical; color:#374151;
+                           font-family:inherit; outline:none; box-sizing:border-box;"
+                    onfocus="this.style.borderColor='#6366f1'"
+                    onblur="this.style.borderColor='#e2e8f0'; _saveComment(this)"
+                    oninput="_scheduleCommentSave(this)"
+                  ></textarea>
+                  <span
+                    id="cmt-status-{{ img.filename | replace('.', '_') | replace('-', '_') }}"
+                    style="position:absolute; bottom:4px; right:6px; font-size:.65rem;
+                           color:#10b981; display:none; pointer-events:none;">
+                    ✓ saved
+                  </span>
                 </div>
               </td>
 
@@ -1465,6 +1568,148 @@ function loadDevSku(skuId) {
 
 
 // ════════════════════════════════════════════════════════════
+// SKU IMAGE COMMENTS — autosave on blur / debounced input
+// ════════════════════════════════════════════════════════════
+(function () {
+  const _CMT_SKU = {% if dq %}"{{ dq | e }}"{% else %}null{% endif %};
+  const _cmtTimers = {};
+
+  // Load existing comments for ALL visible SKUs on page load
+  // Works for both Business View (multiple SKUs) and Developer View (single SKU)
+  const _skuSet = new Set();
+  document.querySelectorAll('textarea[data-sku]').forEach(el => _skuSet.add(el.dataset.sku));
+
+  _skuSet.forEach(skuId => {
+    fetch('/api/comments/' + encodeURIComponent(skuId))
+      .then(r => r.json())
+      .then(data => {
+        Object.entries(data).forEach(([filename, comment]) => {
+          // Find all textareas for this sku+filename (dev view and biz view may both exist)
+          document.querySelectorAll(`textarea[data-sku="${CSS.escape(skuId)}"][data-filename="${CSS.escape(filename)}"]`)
+            .forEach(el => { el.value = comment; });
+        });
+      })
+      .catch(() => {});
+  });
+
+  // Debounced: save 1.5s after user stops typing
+  window._scheduleCommentSave = function(el) {
+    const key = el.dataset.sku + '|' + el.dataset.filename;
+    clearTimeout(_cmtTimers[key]);
+    _cmtTimers[key] = setTimeout(() => _saveComment(el), 1500);
+  };
+
+  // Immediate save (on blur or after debounce)
+  window._saveComment = function(el) {
+    const key = el.dataset.sku + '|' + el.dataset.filename;
+    clearTimeout(_cmtTimers[key]);
+    // Status span is the next sibling element inside the same wrapper div
+    const statusEl = el.parentElement.querySelector('span[id^="cmt-status-"]');
+
+    fetch('/api/comment', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        sku_id:   el.dataset.sku,
+        filename: el.dataset.filename,
+        comment:  el.value.trim(),
+      }),
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok && statusEl) {
+          statusEl.style.display = 'block';
+          setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
+        }
+      })
+      .catch(() => {});
+  };
+})();
+
+// ════════════════════════════════════════════════════════════
+// PRESENCE — Who's viewing this SKU
+// ════════════════════════════════════════════════════════════
+(function () {
+  const SKU_ID        = {% if dq %}"{{ dq | e }}"{% else %}null{% endif %};
+  const IS_LOGGED_IN  = {{ 'true' if show_reprocess else 'false' }};
+  let   _presenceTimer = null;
+  let   _heartbeatTimer = null;
+
+  function _initials(name) {
+    return name.split(/[\s._-]+/).map(w => w[0]).join('').toUpperCase().slice(0, 2);
+  }
+
+  // Pastel colour per username (consistent across page loads)
+  function _avatarColor(name) {
+    const colors = ['#6366f1','#ec4899','#f59e0b','#10b981','#3b82f6','#8b5cf6','#ef4444','#14b8a6','#f97316','#06b6d4'];
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xfffffff;
+    return colors[h % colors.length];
+  }
+
+  function _renderAvatars(viewers) {
+    const bar     = document.getElementById('presence-bar');
+    const avatars = document.getElementById('presence-avatars');
+    if (!bar || !avatars) return;
+    if (!viewers || viewers.length === 0) {
+      bar.style.display = 'none';
+      return;
+    }
+    bar.style.display = 'flex';
+    avatars.innerHTML = viewers.map(name => {
+      const color = _avatarColor(name);
+      return `<span title="${name}" style="
+        display:inline-flex; align-items:center; justify-content:center;
+        width:30px; height:30px; border-radius:50%;
+        background:${color}; color:#fff;
+        font-size:.7rem; font-weight:700; cursor:default;
+        border:2px solid #fff; box-shadow:0 1px 3px rgba(0,0,0,.2);"
+      >${_initials(name)}</span>
+      <span style="font-size:.8rem; color:#78350f; font-weight:500;">${name}</span>`;
+    }).join('');
+  }
+
+  function _poll() {
+    if (!SKU_ID) return;
+    fetch(`/api/presence/${encodeURIComponent(SKU_ID)}`)
+      .then(r => r.json())
+      .then(d => _renderAvatars(d.viewers || []))
+      .catch(() => {});
+  }
+
+  function _heartbeat() {
+    if (!SKU_ID || !IS_LOGGED_IN) return;
+    fetch('/api/presence/heartbeat', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({ sku_id: SKU_ID }),
+    })
+      .then(r => r.json())
+      .then(d => _renderAvatars(d.viewers || []))
+      .catch(() => {});
+  }
+
+  if (SKU_ID) {
+    // Initial render
+    _poll();
+    if (IS_LOGGED_IN) _heartbeat();
+
+    // Heartbeat every 30s (keeps current user alive in store)
+    if (IS_LOGGED_IN) _heartbeatTimer = setInterval(_heartbeat, 30_000);
+
+    // Poll every 15s (sees others joining/leaving)
+    _presenceTimer = setInterval(_poll, 15_000);
+
+    // On page unload — send one last heartbeat won't help (user gone),
+    // so we just let the 2-min TTL handle cleanup naturally.
+    window.addEventListener('beforeunload', () => {
+      clearInterval(_presenceTimer);
+      clearInterval(_heartbeatTimer);
+    });
+  }
+})();
+
+// ════════════════════════════════════════════════════════════
 // REPROCESS MODAL
 // ════════════════════════════════════════════════════════════
 
@@ -1597,6 +1842,124 @@ function submitReprocess() {
   });
 }
 
+
+// ════════════════════════════════════════════════════════════
+// QC DONE — confirm modal + save
+// ════════════════════════════════════════════════════════════
+let _qcIdx = null;
+let _qcSkuId = null;
+
+function openQcModal(idx, skuId) {
+  _qcIdx   = idx;
+  _qcSkuId = skuId;
+  document.getElementById('qc-sku-label').textContent = skuId;
+  document.getElementById('qc-overlay').style.display = 'flex';
+}
+
+function closeQcModal() {
+  document.getElementById('qc-overlay').style.display = 'none';
+  _qcIdx = null; _qcSkuId = null;
+}
+
+function confirmQcDone() {
+  if (!_qcSkuId) return;
+  const submitBtn = document.getElementById('qc-confirm-btn');
+  submitBtn.disabled    = true;
+  submitBtn.textContent = 'Saving…';
+
+  fetch('/api/qc', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({ sku_id: _qcSkuId, action: 'done' }),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        // Swap button → badge + undo in the header
+        const wrap = document.getElementById('qc-wrap-' + _qcIdx);
+        if (wrap) {
+          wrap.innerHTML = `
+            <span style="display:inline-flex;align-items:center;gap:5px;font-size:.75rem;
+                         background:#f0fdf4;border:1px solid #86efac;color:#166534;
+                         padding:4px 12px;border-radius:8px;font-weight:600;">
+              ✅ QC done by <strong>${d.qc_by}</strong>
+            </span>
+            <button onclick="undoQc(${_qcIdx}, '${_qcSkuId}')"
+                    style="font-size:.7rem;padding:3px 10px;border-radius:6px;
+                           border:1px solid #fca5a5;background:#fff;color:#dc2626;
+                           cursor:pointer;font-weight:500;">
+              Undo
+            </button>`;
+        }
+        closeQcModal();
+      } else {
+        alert('Failed: ' + (d.error || 'unknown error'));
+      }
+    })
+    .catch(() => alert('Network error, please try again.'))
+    .finally(() => {
+      submitBtn.disabled    = false;
+      submitBtn.textContent = 'Confirm QC Done';
+    });
+}
+
+function undoQc(idx, skuId) {
+  if (!confirm('Undo QC Done for ' + skuId + '?')) return;
+  fetch('/api/qc', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({ sku_id: skuId, action: 'undo' }),
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        const wrap = document.getElementById('qc-wrap-' + idx);
+        if (wrap) {
+          wrap.innerHTML = `
+            <button onclick="openQcModal(${idx}, '${skuId}')"
+                    style="font-size:.75rem;padding:5px 14px;border-radius:8px;
+                           border:1px solid #bbf7d0;background:#f0fdf4;color:#15803d;
+                           cursor:pointer;font-weight:600;">
+              ✅ QC Done
+            </button>`;
+        }
+      }
+    })
+    .catch(() => alert('Network error'));
+}
 </script>
+
+<!-- ════ QC Confirm Modal ════ -->
+<div id="qc-overlay"
+     onclick="if(event.target===this) closeQcModal()"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45);
+            z-index:9999; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:16px; padding:28px 32px; width:380px;
+              max-width:92vw; box-shadow:0 20px 60px rgba(0,0,0,.25);">
+    <div style="font-size:1.6rem; text-align:center; margin-bottom:8px;">✅</div>
+    <h3 style="font-size:1rem; font-weight:700; color:#1e293b; text-align:center; margin:0 0 6px;">
+      Confirm QC Done
+    </h3>
+    <p style="font-size:.83rem; color:#64748b; text-align:center; margin:0 0 20px;">
+      Mark <strong id="qc-sku-label" style="color:#1e293b;"></strong> as QC completed?
+    </p>
+    <p style="font-size:.78rem; color:#94a3b8; text-align:center; margin:0 0 24px;">
+      This will be saved with your username and timestamp.
+    </p>
+    <div style="display:flex; gap:10px;">
+      <button onclick="closeQcModal()"
+              style="flex:1; padding:10px; border-radius:9px; border:1px solid #e2e8f0;
+                     background:#f8fafc; color:#64748b; cursor:pointer; font-size:.85rem; font-weight:500;">
+        Cancel
+      </button>
+      <button id="qc-confirm-btn" onclick="confirmQcDone()"
+              style="flex:2; padding:10px; border-radius:9px; border:none;
+                     background:#16a34a; color:#fff; cursor:pointer;
+                     font-size:.85rem; font-weight:700;">
+        Confirm QC Done
+      </button>
+    </div>
+  </div>
+</div>
 
 {% endblock %}

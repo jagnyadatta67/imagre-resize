@@ -218,6 +218,14 @@
           <span class="badge {% if sku.status == 'done' %}badge-done{% elif sku.status == 'failed' %}badge-failed{% else %}badge-skipped{% endif %}"
                 style="font-size:.6rem; padding:1px 7px;">{{ sku.status }}</span>
         </div>
+        {% if sku.qc_by %}
+        <div style="margin-top:5px; display:flex; align-items:center; gap:4px;
+                    background:#f0fdf4; border:1px solid #86efac; border-radius:6px;
+                    padding:2px 7px;">
+          <span style="font-size:.62rem; color:#166534; font-weight:600;">✅ QC</span>
+          <span style="font-size:.6rem; color:#15803d;" title="QC done by {{ sku.qc_by }}">{{ sku.qc_by }}</span>
+        </div>
+        {% endif %}
         <p style="font-size:.67rem; color:#94a3b8; margin:5px 0 0;">
           {{ sku.last_processed_at | fmt_dt if sku.last_processed_at else '—' }}
         </p>

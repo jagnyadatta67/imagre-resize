@@ -183,7 +183,7 @@ def process_batch(
 
     for doc in docs:
         version   = doc.get("image_container", "")
-        container = VERSION_TO_CONTAINER.get(version, "in-media")
+        container = VERSION_TO_CONTAINER.get(version, "in-media-uk")
         category  = extract_category(doc.get("categories", []))
 
         for color in doc.get("colors", []):
