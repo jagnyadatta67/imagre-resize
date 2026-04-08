@@ -1081,6 +1081,70 @@ def export_comments():
     )
 
 
+# ── QC Report ────────────────────────────────────────────────
+
+@app.route("/api/qc-report")
+def api_qc_report():
+    """
+    Returns per-user QC summary:
+      [{ username, total, skus: [{sku_id, qc_at, category}] }]
+    Requires login.
+    """
+    if not _current_user():
+        return jsonify({"ok": False, "error": "not_logged_in"}), 401
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        # Per-user totals + last activity
+        cur.execute("""
+            SELECT
+                username,
+                COUNT(*)          AS total,
+                MAX(updated_at)   AS last_at
+            FROM sku_comments
+            WHERE filename = '__QC__'
+              AND username IS NOT NULL
+            GROUP BY username
+            ORDER BY total DESC
+        """)
+        summary_rows = cur.fetchall()
+
+        users = []
+        for r in summary_rows:
+            uname = r["username"]
+            # SKU list for this user with category hint from sku_results
+            cur.execute("""
+                SELECT sc.sku_id, sc.updated_at AS qc_at,
+                       COALESCE(sr.category, '') AS category
+                FROM sku_comments sc
+                LEFT JOIN sku_results sr ON sr.sku_id = sc.sku_id
+                WHERE sc.filename  = '__QC__'
+                  AND sc.username  = %s
+                ORDER BY sc.updated_at DESC
+            """, (uname,))
+            sku_rows = cur.fetchall()
+
+            users.append({
+                "username": uname,
+                "total":    int(r["total"]),
+                "last_at":  r["last_at"].strftime("%Y-%m-%d %H:%M") if r["last_at"] else "",
+                "skus": [
+                    {
+                        "sku_id":   s["sku_id"],
+                        "qc_at":    s["qc_at"].strftime("%Y-%m-%d %H:%M") if s["qc_at"] else "",
+                        "category": s["category"],
+                    }
+                    for s in sku_rows
+                ],
+            })
+    finally:
+        cur.close()
+        db.close()
+
+    return jsonify({"ok": True, "users": users})
+
+
 # ── Per-image manual reprocess ────────────────────────────────
 
 @app.route("/api/reprocess-image", methods=["POST"])
