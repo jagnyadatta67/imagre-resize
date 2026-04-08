@@ -785,18 +785,18 @@ FAILED_SKU_ID,,true</pre>
         <h2 style="font-size:1.05rem; font-weight:700; color:#1e293b; margin:0;">QC Progress Report</h2>
         <p style="font-size:.8rem; color:#94a3b8; margin:4px 0 0;">Articles reviewed and approved per team member</p>
       </div>
-      <button onclick="loadQcReport()"
+      <button onclick="loadQcReport(true)"
               style="font-size:.78rem; padding:6px 16px; border-radius:8px; border:1px solid #e2e8f0;
                      background:#fff; color:#4f46e5; cursor:pointer; font-weight:600;">
         🔄 Refresh
       </button>
     </div>
 
-    <!-- Summary cards row -->
-    <div id="qc-report-summary" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:14px; margin-bottom:28px;"></div>
+    <!-- Total + user cards (clickable accordion) -->
+    <div id="qc-report-summary" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:14px; margin-bottom:24px;"></div>
 
-    <!-- Per-user detail tables -->
-    <div id="qc-report-detail"></div>
+    <!-- Expanded SKU list for the clicked user -->
+    <div id="qc-report-sku-panel"></div>
 
     <!-- Loading / empty state -->
     <div id="qc-report-loading" style="text-align:center; padding:60px 0; color:#94a3b8;">
@@ -1091,97 +1091,176 @@ function switchTab(name, btn) {
 }
 
 // ── QC Report ────────────────────────────────────────────────────
-let _qcReportLoaded = false;
+let _qcReportLoaded  = false;
+let _qcActiveUser    = null;   // currently expanded username
+let _qcUsersData     = [];     // cached API response
 
-function loadQcReport() {
+function loadQcReport(force) {
+  if (_qcReportLoaded && !force) return;   // don't re-fetch on tab switch unless forced
   const loading = document.getElementById('qc-report-loading');
   const summary = document.getElementById('qc-report-summary');
-  const detail  = document.getElementById('qc-report-detail');
+  const panel   = document.getElementById('qc-report-sku-panel');
   loading.style.display = 'block';
   summary.innerHTML = '';
-  detail.innerHTML  = '';
+  panel.innerHTML   = '';
+  _qcActiveUser     = null;
 
   fetch('/api/qc-report')
     .then(r => r.json())
     .then(data => {
       loading.style.display = 'none';
-      if (!data.ok) { loading.innerHTML = '<div style="color:#ef4444;">Failed to load report.</div>'; return; }
+      if (!data.ok) {
+        loading.innerHTML = '<div style="color:#ef4444;font-size:.85rem;">Failed to load report.</div>';
+        loading.style.display = 'block';
+        return;
+      }
 
-      const users = data.users || [];
-      if (!users.length) {
+      _qcUsersData = data.users || [];
+      if (!_qcUsersData.length) {
         loading.style.display = 'block';
         loading.innerHTML = '<div style="font-size:2rem;margin-bottom:8px;">🟡</div><div style="font-size:.85rem;">No QC approvals recorded yet.</div>';
         return;
       }
 
-      const totalAll = users.reduce((s, u) => s + u.total, 0);
-
-      // ── Summary cards ──
-      const allCard = `
-        <div class="stat-card" style="border:2px solid #6366f1;">
-          <div class="stat-value" style="color:#4f46e5;">${totalAll}</div>
-          <div class="stat-label">Total QC Done</div>
-        </div>`;
-      const userCards = users.map(u => {
-        const pct = totalAll ? Math.round(u.total / totalAll * 100) : 0;
-        const color = _qcAvatarColor(u.username);
-        return `
-          <div class="stat-card" style="border-left:4px solid ${color};">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-              <span style="width:28px;height:28px;border-radius:50%;background:${color};color:#fff;
-                           font-size:.7rem;font-weight:700;display:inline-flex;align-items:center;
-                           justify-content:center;">${_qcInitials(u.username)}</span>
-              <span style="font-weight:700;font-size:.88rem;color:#1e293b;">${u.username}</span>
-            </div>
-            <div class="stat-value" style="color:${color};font-size:1.6rem;">${u.total}</div>
-            <div class="stat-label">articles · ${pct}% of total</div>
-            <div style="margin-top:8px;height:5px;background:#f1f5f9;border-radius:9999px;overflow:hidden;">
-              <div style="width:${pct}%;height:100%;background:${color};border-radius:9999px;"></div>
-            </div>
-            <div style="font-size:.7rem;color:#94a3b8;margin-top:6px;">Last: ${u.last_at}</div>
-          </div>`;
-      }).join('');
-      summary.innerHTML = allCard + userCards;
-
-      // ── Per-user detail tables ──
-      detail.innerHTML = users.map(u => {
-        const color = _qcAvatarColor(u.username);
-        const rows = u.skus.map(s => `
-          <tr>
-            <td><span class="mono" style="font-size:.8rem;">${s.sku_id}</span></td>
-            <td style="color:#6b7280;">${s.category || '—'}</td>
-            <td style="color:#6b7280;white-space:nowrap;">${s.qc_at}</td>
-          </tr>`).join('');
-        return `
-          <div class="card" style="margin-bottom:20px;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-              <span style="width:32px;height:32px;border-radius:50%;background:${color};color:#fff;
-                           font-size:.75rem;font-weight:700;display:inline-flex;align-items:center;
-                           justify-content:center;flex-shrink:0;">${_qcInitials(u.username)}</span>
-              <div>
-                <div style="font-weight:700;color:#1e293b;">${u.username}</div>
-                <div style="font-size:.75rem;color:#94a3b8;">${u.total} article${u.total !== 1 ? 's' : ''} QC approved</div>
-              </div>
-            </div>
-            <div style="overflow-x:auto;">
-              <table class="tbl">
-                <thead><tr>
-                  <th>SKU ID</th>
-                  <th>Category</th>
-                  <th>QC At</th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
-            </div>
-          </div>`;
-      }).join('');
-
+      _renderQcCards();
       _qcReportLoaded = true;
     })
     .catch(() => {
       loading.style.display = 'block';
-      loading.innerHTML = '<div style="color:#ef4444;font-size:.85rem;">Network error loading report.</div>';
+      loading.innerHTML = '<div style="color:#ef4444;font-size:.85rem;">Network error. Please retry.</div>';
     });
+}
+
+function _renderQcCards() {
+  const summary  = document.getElementById('qc-report-summary');
+  const totalAll = _qcUsersData.reduce((s, u) => s + u.total, 0);
+
+  // ── Total card (non-clickable) ──
+  const allCard = `
+    <div class="stat-card" style="border:2px solid #6366f1; display:flex; flex-direction:column; justify-content:center;">
+      <div class="stat-value" style="color:#4f46e5;">${totalAll}</div>
+      <div class="stat-label" style="margin-top:6px;">Total QC Done</div>
+      <div style="font-size:.7rem;color:#94a3b8;margin-top:4px;">${_qcUsersData.length} team member${_qcUsersData.length !== 1 ? 's' : ''}</div>
+    </div>`;
+
+  // ── Per-user cards (clickable) ──
+  const userCards = _qcUsersData.map(u => {
+    const pct      = totalAll ? Math.round(u.total / totalAll * 100) : 0;
+    const color    = _qcAvatarColor(u.username);
+    const isActive = _qcActiveUser === u.username;
+    return `
+      <div id="qc-card-${u.username}"
+           onclick="_toggleQcUser('${u.username}')"
+           class="stat-card"
+           style="border-left:4px solid ${color}; cursor:pointer; transition:box-shadow .15s, transform .15s;
+                  ${isActive ? 'box-shadow:0 4px 18px rgba(0,0,0,.12); transform:translateY(-2px);' : ''}
+                  user-select:none;"
+           onmouseover="this.style.boxShadow='0 4px 18px rgba(0,0,0,.1)';this.style.transform='translateY(-2px)';"
+           onmouseout="if('${isActive}'!=='true'){this.style.boxShadow='';this.style.transform='';}">
+
+        <!-- Avatar + name -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <span style="width:32px;height:32px;border-radius:50%;background:${color};color:#fff;
+                       font-size:.72rem;font-weight:700;display:inline-flex;align-items:center;
+                       justify-content:center;flex-shrink:0;">${_qcInitials(u.username)}</span>
+          <div style="min-width:0;">
+            <div style="font-weight:700;font-size:.9rem;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${u.username}</div>
+            <div style="font-size:.68rem;color:#94a3b8;">Last: ${u.last_at}</div>
+          </div>
+          <span style="margin-left:auto;font-size:.75rem;color:${isActive ? color : '#94a3b8'};">
+            ${isActive ? '▲' : '▼'}
+          </span>
+        </div>
+
+        <!-- Count + progress -->
+        <div class="stat-value" style="color:${color};font-size:1.7rem;">${u.total}</div>
+        <div class="stat-label" style="margin-top:4px;">articles · ${pct}%</div>
+        <div style="margin-top:8px;height:5px;background:#f1f5f9;border-radius:9999px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${color};border-radius:9999px;transition:width .4s;"></div>
+        </div>
+        <div style="font-size:.68rem;color:#94a3b8;margin-top:6px;">Click to see SKUs</div>
+      </div>`;
+  }).join('');
+
+  summary.innerHTML = allCard + userCards;
+
+  // Re-render SKU panel if a user was already expanded
+  if (_qcActiveUser) _renderQcSkuPanel(_qcActiveUser);
+}
+
+function _toggleQcUser(username) {
+  if (_qcActiveUser === username) {
+    // Collapse
+    _qcActiveUser = null;
+    document.getElementById('qc-report-sku-panel').innerHTML = '';
+  } else {
+    _qcActiveUser = username;
+    _renderQcSkuPanel(username);
+  }
+  _renderQcCards();  // re-render cards to update arrow + highlight
+}
+
+function _renderQcSkuPanel(username) {
+  const panel = document.getElementById('qc-report-sku-panel');
+  const u     = _qcUsersData.find(x => x.username === username);
+  if (!u) return;
+  const color = _qcAvatarColor(u.username);
+
+  const BASE_URL = 'https://image.landmarkshops.in/';
+
+  const rows = u.skus.map((s, i) => `
+    <tr>
+      <td style="color:#94a3b8;font-size:.75rem;text-align:center;">${i + 1}</td>
+      <td>
+        <a href="${BASE_URL}?bq=${encodeURIComponent(s.sku_id)}" target="_blank"
+           style="font-family:ui-monospace,monospace; font-size:.8rem; color:#4f46e5;
+                  text-decoration:none; font-weight:600;"
+           onmouseover="this.style.textDecoration='underline';"
+           onmouseout="this.style.textDecoration='none';">
+          ${s.sku_id}
+          <span style="font-size:.65rem;color:#94a3b8;margin-left:3px;">↗</span>
+        </a>
+      </td>
+      <td style="color:#6b7280;font-size:.8rem;">${s.category || '—'}</td>
+      <td style="color:#94a3b8;font-size:.78rem;white-space:nowrap;">${s.qc_at}</td>
+    </tr>`).join('');
+
+  panel.innerHTML = `
+    <div class="card" style="border-top:3px solid ${color}; margin-top:4px;">
+      <!-- Panel header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="width:34px;height:34px;border-radius:50%;background:${color};color:#fff;
+                       font-size:.75rem;font-weight:700;display:inline-flex;align-items:center;
+                       justify-content:center;">${_qcInitials(u.username)}</span>
+          <div>
+            <div style="font-weight:700;color:#1e293b;">${u.username}</div>
+            <div style="font-size:.75rem;color:#94a3b8;">${u.total} SKU${u.total !== 1 ? 's' : ''} QC approved · click any SKU to open</div>
+          </div>
+        </div>
+        <button onclick="_toggleQcUser('${u.username}')"
+                style="font-size:.75rem;padding:4px 12px;border-radius:8px;border:1px solid #e2e8f0;
+                       background:#f8fafc;color:#64748b;cursor:pointer;">
+          ✕ Close
+        </button>
+      </div>
+
+      <!-- SKU table -->
+      <div style="overflow-x:auto; max-height:420px; overflow-y:auto;">
+        <table class="tbl">
+          <thead><tr>
+            <th style="width:40px;">#</th>
+            <th>SKU ID</th>
+            <th>Category</th>
+            <th>QC At</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  // Scroll panel into view smoothly
+  setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
 }
 
 function _qcInitials(name) {
