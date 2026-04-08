@@ -1120,22 +1120,48 @@ FAILED_SKU_ID,,true</pre>
   background:rgba(0,0,0,0.88);
   align-items:center; justify-content:center; flex-direction:column;">
 
+  <!-- Left arrow -->
+  <button id="lb-prev" onclick="event.stopPropagation(); lbPrev()" style="
+    position:fixed; left:20px; top:50%; transform:translateY(-50%);
+    background:rgba(255,255,255,0.12); border:none; color:#fff;
+    font-size:2rem; width:52px; height:52px; border-radius:50%;
+    cursor:pointer; transition:background .15s; display:flex;
+    align-items:center; justify-content:center; line-height:1;"
+    onmouseover="this.style.background='rgba(255,255,255,0.25)'"
+    onmouseout="this.style.background='rgba(255,255,255,0.12)'"
+    title="Previous (←)">‹</button>
+
+  <!-- Right arrow -->
+  <button id="lb-next" onclick="event.stopPropagation(); lbNext()" style="
+    position:fixed; right:20px; top:50%; transform:translateY(-50%);
+    background:rgba(255,255,255,0.12); border:none; color:#fff;
+    font-size:2rem; width:52px; height:52px; border-radius:50%;
+    cursor:pointer; transition:background .15s; display:flex;
+    align-items:center; justify-content:center; line-height:1;"
+    onmouseover="this.style.background='rgba(255,255,255,0.25)'"
+    onmouseout="this.style.background='rgba(255,255,255,0.12)'"
+    title="Next (→)">›</button>
+
   <div onclick="event.stopPropagation()" style="
     position:relative; display:flex; flex-direction:column;
     align-items:center; max-width:90vw;">
 
-    <!-- Close -->
-    <button onclick="closeLightbox()" style="
-      position:absolute; top:-44px; right:0;
-      background:none; border:none; color:#e2e8f0;
-      font-size:1.6rem; cursor:pointer; line-height:1;"
-      title="Close (Esc)">✕</button>
+    <!-- Close + counter -->
+    <div style="position:absolute; top:-44px; left:0; right:0;
+                display:flex; align-items:center; justify-content:space-between;">
+      <span id="lb-counter"
+        style="color:#94a3b8; font-size:.82rem; font-weight:600;"></span>
+      <button onclick="closeLightbox()" style="
+        background:none; border:none; color:#e2e8f0;
+        font-size:1.6rem; cursor:pointer; line-height:1;"
+        title="Close (Esc)">✕</button>
+    </div>
 
     <!-- Full image -->
     <img id="lightbox-img" src="" alt=""
       style="max-height:82vh; max-width:88vw; object-fit:contain;
              border-radius:10px; box-shadow:0 24px 80px rgba(0,0,0,0.6);
-             display:block;"/>
+             display:block; transition:opacity .15s;"/>
 
     <!-- Bottom bar -->
     <div style="
@@ -1635,52 +1661,124 @@ const _lbImg           = document.getElementById('lightbox-img');
 const _lbFilename      = document.getElementById('lightbox-filename');
 const _lbBtnProcessed  = document.getElementById('lb-btn-processed');
 const _lbBtnOriginal   = document.getElementById('lb-btn-original');
+const _lbCounter       = document.getElementById('lb-counter');
+const _lbPrevBtn       = document.getElementById('lb-prev');
+const _lbNextBtn       = document.getElementById('lb-next');
 
-// Thumbnail URLs (shown in grid card)
-let _lbProcessedUrl = '';
-let _lbOriginalUrl  = '';
-let _lbHasOriginal  = false;
+let _lbImages   = [];   // [{processed, original, hasOriginal, filename}] — all imgs in SKU
+let _lbIndex    = 0;    // current position
+let _lbMode     = 'processed';  // current toggle mode
 
 function openLightbox(imgEl) {
-  _lbProcessedUrl = imgEl.dataset.processed || imgEl.src;
-  _lbOriginalUrl  = imgEl.dataset.original  || '';
-  _lbHasOriginal  = !!_lbOriginalUrl;
+  // Collect all biz-img from the same SKU card
+  const card = imgEl.closest('.card');
+  _lbImages = [];
+  if (card) {
+    card.querySelectorAll('.biz-img').forEach(img => {
+      _lbImages.push({
+        processed:   img.dataset.processed || img.src,
+        original:    img.dataset.original  || '',
+        hasOriginal: !!(img.dataset.original),
+        filename:    img.alt || '',
+      });
+    });
+  }
+  // Fallback: just the clicked image
+  if (!_lbImages.length) {
+    _lbImages = [{
+      processed:   imgEl.dataset.processed || imgEl.src,
+      original:    imgEl.dataset.original  || '',
+      hasOriginal: !!(imgEl.dataset.original),
+      filename:    imgEl.alt || '',
+    }];
+  }
 
-  _lbFilename.textContent = imgEl.alt;
+  // Find index of clicked image
+  const clickedProcessed = imgEl.dataset.processed || imgEl.src;
+  _lbIndex = _lbImages.findIndex(i => i.processed === clickedProcessed);
+  if (_lbIndex < 0) _lbIndex = 0;
 
-  // Hide Original button if no original available
-  _lbBtnOriginal.style.display = _lbHasOriginal ? '' : 'none';
+  // Open in same mode as the card thumbnail
+  _lbMode = imgEl.dataset.mode || 'processed';
 
-  // Open lightbox in same mode currently shown on the card
-  lbSetMode(imgEl.dataset.mode || 'processed');
-
+  _lbRender();
   _lightbox.style.display = 'flex';
   document.body.style.overflow = 'hidden';
+}
+
+function _lbRender() {
+  const item = _lbImages[_lbIndex];
+  if (!item) return;
+
+  // Fade image swap
+  _lbImg.style.opacity = '0';
+  setTimeout(() => {
+    _lbImg.src           = _lbMode === 'original' && item.hasOriginal ? item.original : item.processed;
+    _lbImg.alt           = item.filename;
+    _lbImg.style.opacity = '1';
+  }, 100);
+
+  _lbFilename.textContent = item.filename;
+
+  // Counter  e.g. "3 / 7"
+  _lbCounter.textContent = _lbImages.length > 1
+    ? `${_lbIndex + 1} / ${_lbImages.length}` : '';
+
+  // Show/hide nav arrows
+  _lbPrevBtn.style.display = _lbImages.length > 1 ? 'flex' : 'none';
+  _lbNextBtn.style.display = _lbImages.length > 1 ? 'flex' : 'none';
+  _lbPrevBtn.style.opacity = _lbIndex > 0                       ? '1' : '0.3';
+  _lbNextBtn.style.opacity = _lbIndex < _lbImages.length - 1    ? '1' : '0.3';
+
+  // Original/Processed toggle — show Original only if available for THIS image
+  _lbBtnOriginal.style.display = item.hasOriginal ? '' : 'none';
+
+  // Ensure mode is valid for this image
+  if (_lbMode === 'original' && !item.hasOriginal) _lbMode = 'processed';
+  _lbApplyToggle();
+}
+
+function _lbApplyToggle() {
+  const item = _lbImages[_lbIndex];
+  if (!item) return;
+  if (_lbMode === 'original' && item.hasOriginal) {
+    _lbBtnOriginal.style.background  = '#6366f1';  _lbBtnOriginal.style.color  = '#fff';
+    _lbBtnProcessed.style.background = 'transparent'; _lbBtnProcessed.style.color = '#6366f1';
+  } else {
+    _lbBtnProcessed.style.background = '#6366f1'; _lbBtnProcessed.style.color = '#fff';
+    _lbBtnOriginal.style.background  = 'transparent'; _lbBtnOriginal.style.color = '#6366f1';
+  }
+}
+
+function lbSetMode(mode) {
+  _lbMode = mode;
+  const item = _lbImages[_lbIndex];
+  if (!item) return;
+  _lbImg.src = mode === 'original' && item.hasOriginal ? item.original : item.processed;
+  _lbApplyToggle();
+}
+
+function lbPrev() {
+  if (_lbIndex > 0) { _lbIndex--; _lbRender(); }
+}
+
+function lbNext() {
+  if (_lbIndex < _lbImages.length - 1) { _lbIndex++; _lbRender(); }
 }
 
 function closeLightbox() {
   _lightbox.style.display  = 'none';
   document.body.style.overflow = '';
+  _lbImages = []; _lbIndex = 0;
 }
 
-function lbSetMode(mode) {
-  if (mode === 'original' && _lbHasOriginal) {
-    _lbImg.src = _lbOriginalUrl;
-    _lbBtnOriginal.style.background  = '#6366f1';
-    _lbBtnOriginal.style.color       = '#fff';
-    _lbBtnProcessed.style.background = 'transparent';
-    _lbBtnProcessed.style.color      = '#6366f1';
-  } else {
-    _lbImg.src = _lbProcessedUrl;
-    _lbBtnProcessed.style.background = '#6366f1';
-    _lbBtnProcessed.style.color      = '#fff';
-    _lbBtnOriginal.style.background  = 'transparent';
-    _lbBtnOriginal.style.color       = '#6366f1';
-  }
-}
-
-// ESC — close whichever modal is visible
+// ESC + arrow keys
 document.addEventListener('keydown', e => {
+  const lbOpen = _lightbox.style.display !== 'none';
+  if (lbOpen) {
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); lbPrev(); return; }
+    if (e.key === 'ArrowRight') { e.preventDefault(); lbNext(); return; }
+  }
   if (e.key === 'Escape') {
     if (document.getElementById('rp-overlay').style.display !== 'none') {
       closeReprocessModal();
@@ -1688,7 +1786,9 @@ document.addEventListener('keydown', e => {
       closeUploadModal();
     } else if (document.getElementById('ua-overlay').style.display !== 'none') {
       closeUploadAllModal();
-    } else {
+    } else if (document.getElementById('bu-overlay').style.display !== 'none') {
+      closeBulkUploadModal();
+    } else if (lbOpen) {
       closeLightbox();
     }
   }
