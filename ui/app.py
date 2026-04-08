@@ -17,11 +17,14 @@ Routes
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import sys
 import threading
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -1386,6 +1389,87 @@ def api_upload_image():
     except Exception as exc:
         logging.getLogger("upload").exception("upload-image failed  sku=%s  file=%s", sku_id, filename)
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# ── SKU-level bulk download (original images → ZIP) ──────────
+
+@app.route("/api/download-sku-originals/<path:sku_id>")
+def api_download_sku_originals(sku_id: str):
+    """
+    Build a ZIP of all original images for a SKU in-memory (no disk I/O),
+    downloading from Azure in parallel, then stream to browser.
+    Requires login.
+    """
+    from flask import Response
+
+    if not _current_user():
+        return jsonify({"ok": False, "error": "not_logged_in"}), 401
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        # Container from sku_results
+        cur.execute(
+            "SELECT container_name FROM sku_results WHERE sku_id = %s LIMIT 1",
+            (sku_id,)
+        )
+        row = cur.fetchone()
+        if not row or not row["container_name"]:
+            return jsonify({"ok": False, "error": "SKU not found"}), 404
+        container = row["container_name"]
+
+        # blob_name = full Azure path (e.g. lifestyle/SKU_01.jpg)
+        # filename  = base name only  (e.g. SKU_01.jpg)
+        cur.execute("""
+            SELECT   blob_name, filename
+            FROM     image_results
+            WHERE    sku_id    = %s
+              AND    blob_name IS NOT NULL
+              AND    blob_name != ''
+            GROUP BY blob_name, filename
+            ORDER BY filename
+        """, (sku_id,))
+        images = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+
+    if not images:
+        return jsonify({"ok": False, "error": "No images found for this SKU"}), 404
+
+    # ── Parallel download from Azure ─────────────────────────
+    def _fetch(img):
+        try:
+            data = _azure.download_blob_bytes(container, img["blob_name"])
+            app.logger.info(f"[dl-zip] {img['filename']}  {len(data)} bytes")
+            return img["filename"], data
+        except Exception as exc:
+            app.logger.warning(f"[dl-zip] skip {img['blob_name']}: {exc}")
+            return None, None
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_fetch, img): img for img in images}
+        for fut in as_completed(futures):
+            fname, data = fut.result()
+            if fname and data:
+                results[fname] = data
+
+    # ── Build ZIP in memory ───────────────────────────────────
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for fname in sorted(results):
+            zf.writestr(fname, results[fname])
+    buf.seek(0)
+
+    safe_name = sku_id.replace("/", "_")
+    return Response(
+        buf.read(),
+        mimetype = "application/zip",
+        headers  = {
+            "Content-Disposition": f'attachment; filename="{safe_name}.zip"',
+        },
+    )
 
 
 # ── SKU-level bulk upload ─────────────────────────────────────

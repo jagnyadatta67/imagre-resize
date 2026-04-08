@@ -117,6 +117,21 @@
         </button>
         {% endif %}
 
+        {% if show_reprocess %}
+        <!-- ⬇ Download Originals -->
+        <a id="dl-btn-{{ loop.index }}"
+           href="/api/download-sku-originals/{{ sku.sku_id | urlencode }}"
+           download="{{ sku.sku_id }}.zip"
+           onclick="_onSkuDownloadClick(this)"
+           style="font-size:.78rem; padding:5px 14px; border-radius:8px; text-decoration:none;
+                  border:1px solid #bae6fd; background:#f0f9ff; color:#0369a1;
+                  cursor:pointer; transition:all .15s; font-weight:600; display:inline-flex; align-items:center; gap:5px;"
+           onmouseover="this.style.background='#e0f2fe';this.style.borderColor='#38bdf8';"
+           onmouseout="this.style.background='#f0f9ff';this.style.borderColor='#bae6fd';">
+          ⬇ Download Originals
+        </a>
+        {% endif %}
+
         <!-- QC Done button / badge -->
         <div id="qc-wrap-{{ loop.index }}"
              data-sku="{{ sku.sku_id }}"
@@ -1261,6 +1276,20 @@ function _renderQcSkuPanel(username) {
 
   // Scroll panel into view smoothly
   setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
+}
+
+// ── SKU bulk download ─────────────────────────────────────────
+function _onSkuDownloadClick(el) {
+  const orig = el.innerHTML;
+  el.innerHTML = '⏳ Preparing ZIP…';
+  el.style.pointerEvents = 'none';
+  el.style.opacity = '0.7';
+  // Re-enable after 30s max (handles slow connections gracefully)
+  setTimeout(() => {
+    el.innerHTML       = orig;
+    el.style.pointerEvents = '';
+    el.style.opacity   = '';
+  }, 30_000);
 }
 
 function _qcInitials(name) {
