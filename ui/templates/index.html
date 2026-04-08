@@ -121,15 +121,14 @@
         <div id="qc-wrap-{{ loop.index }}"
              data-sku="{{ sku.sku_id }}"
              style="{% if not show_reprocess %}margin-left:auto;{% endif %} display:flex; align-items:center; gap:8px;">
-          {% if sku.qc_by %}
-          <!-- Already QC'd -->
+          {% if sku.qc_by and show_reprocess %}
+          <!-- Already QC'd — logged-in only -->
           <span id="qc-badge-{{ loop.index }}"
                 style="display:inline-flex; align-items:center; gap:5px; font-size:.75rem;
                        background:#f0fdf4; border:1px solid #86efac; color:#166534;
                        padding:4px 12px; border-radius:8px; font-weight:600;">
             ✅ QC done by <strong>{{ sku.qc_by }}</strong>
           </span>
-          {% if show_reprocess %}
           <button id="qc-undo-{{ loop.index }}"
                   onclick="undoQc({{ loop.index }}, '{{ sku.sku_id }}')"
                   style="font-size:.7rem; padding:3px 10px; border-radius:6px;
@@ -138,18 +137,17 @@
                   title="Undo QC for this SKU">
             Undo
           </button>
-          {% endif %}
           {% else %}
-          <!-- Not yet QC'd -->
+          <!-- Not yet QC'd — only show to logged-in users -->
           {% if show_reprocess %}
           <button id="qc-btn-{{ loop.index }}"
                   onclick="openQcModal({{ loop.index }}, '{{ sku.sku_id }}')"
                   style="font-size:.75rem; padding:5px 14px; border-radius:8px;
-                         border:1px solid #bbf7d0; background:#f0fdf4; color:#15803d;
+                         border:1px solid #fed7aa; background:#fff7ed; color:#c2410c;
                          cursor:pointer; transition:all .15s; font-weight:600;"
-                  onmouseover="this.style.background='#dcfce7';this.style.borderColor='#4ade80';"
-                  onmouseout="this.style.background='#f0fdf4';this.style.borderColor='#bbf7d0';">
-            ✅ QC Done
+                  onmouseover="this.style.background='#ffedd5';this.style.borderColor='#fb923c';"
+                  onmouseout="this.style.background='#fff7ed';this.style.borderColor='#fed7aa';">
+            ⏳ QC Pending
           </button>
           {% endif %}
           {% endif %}
@@ -1925,11 +1923,13 @@ function undoQc(idx, skuId) {
         const wrap = document.getElementById('qc-wrap-' + idx);
         if (wrap) {
           wrap.innerHTML = `
-            <button onclick="openQcModal(${idx}, '${skuId}')"
+            <button id="qc-btn-${idx}" onclick="openQcModal(${idx}, '${skuId}')"
                     style="font-size:.75rem;padding:5px 14px;border-radius:8px;
-                           border:1px solid #bbf7d0;background:#f0fdf4;color:#15803d;
-                           cursor:pointer;font-weight:600;">
-              ✅ QC Done
+                           border:1px solid #fed7aa;background:#fff7ed;color:#c2410c;
+                           cursor:pointer;font-weight:600;"
+                    onmouseover="this.style.background='#ffedd5';this.style.borderColor='#fb923c';"
+                    onmouseout="this.style.background='#fff7ed';this.style.borderColor='#fed7aa';">
+              ⏳ QC Pending
             </button>`;
         }
       }
