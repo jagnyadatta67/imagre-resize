@@ -1391,6 +1391,138 @@ def api_upload_image():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+# ── SKU-level bulk upload (drag & drop → Azure) ──────────────
+
+@app.route("/api/bulk-upload-images", methods=["POST"])
+def api_bulk_upload_images():
+    """
+    Upload multiple replacement images for a SKU at once.
+
+    POST multipart/form-data:
+      sku_id         — the SKU being updated
+      files          — one or more image files (JPG/PNG)
+
+    For each file:
+      - Filename must match an existing image_results row for this SKU (else skipped)
+      - Uploads to {container}/{TARGET_CONTAINER}/{filename} (overwrite)
+      - Updates image_results: status=done, uploaded_by, method=manual_upload
+    After all uploads, syncs reprocess_count across all rows for the SKU.
+    Returns: { ok, replaced:[{filename, new_url}], skipped:[filename], uploaded_by, reprocess_count }
+    """
+    if not _current_user():
+        return jsonify({"ok": False, "error": "Authentication required"}), 401
+
+    sku_id      = request.form.get("sku_id", "").strip()
+    uploaded_by = _current_user()
+    files       = request.files.getlist("files")
+
+    if not sku_id:
+        return jsonify({"ok": False, "error": "sku_id is required"}), 400
+    if not files:
+        return jsonify({"ok": False, "error": "No files provided"}), 400
+
+    # ── DB: get container + known filenames for this SKU ──────
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT container_name FROM sku_results WHERE sku_id = %s LIMIT 1", (sku_id,))
+        row = cur.fetchone()
+        if not row or not row.get("container_name"):
+            return jsonify({"ok": False, "error": f"SKU '{sku_id}' not found"}), 404
+        container = row["container_name"]
+
+        cur.execute("""
+            SELECT DISTINCT filename FROM image_results
+            WHERE sku_id = %s AND filename IS NOT NULL AND filename != ''
+        """, (sku_id,))
+        known = {r["filename"] for r in cur.fetchall()}
+    finally:
+        cur.close()
+        db.close()
+
+    # ── Process each uploaded file ────────────────────────────
+    replaced = []
+    skipped  = []
+
+    for f in files:
+        fname = f.filename.strip() if f.filename else ""
+        if not fname:
+            continue
+
+        if fname not in known:
+            skipped.append(fname)
+            continue
+
+        try:
+            image_bytes = f.read()
+            azure_url   = _azure.upload_to_newc(fname, image_bytes, container)
+
+            # Update image_results row for this filename
+            db2  = get_db()
+            cur2 = db2.cursor(dictionary=True)
+            try:
+                cur2.execute("""
+                    UPDATE image_results
+                    SET    status      = 'done',
+                           method      = 'manual_upload',
+                           azure_url   = %s,
+                           uploaded_by = %s,
+                           processed_at = %s
+                    WHERE  sku_id    = %s
+                      AND  filename  = %s
+                """, (azure_url, uploaded_by, datetime.now(), sku_id, fname))
+                db2.commit()
+            finally:
+                cur2.close()
+                db2.close()
+
+            base_url = make_cf_url(azure_url) or make_sas_url(azure_url)
+            replaced.append({"filename": fname, "azure_url": azure_url, "base_url": base_url})
+
+        except Exception as exc:
+            app.logger.warning(f"[bulk-upload] failed {fname}: {exc}")
+            skipped.append(fname)
+
+    if not replaced:
+        return jsonify({
+            "ok":      False,
+            "error":   "No files matched known images for this SKU",
+            "skipped": skipped,
+        }), 400
+
+    # ── Sync reprocess_count across all images in SKU ─────────
+    db3  = get_db()
+    cur3 = db3.cursor(dictionary=True)
+    try:
+        cur3.execute("""
+            SELECT COALESCE(MAX(reprocess_count), 0) AS max_rc
+            FROM image_results WHERE sku_id = %s
+        """, (sku_id,))
+        new_rc = (cur3.fetchone()["max_rc"] or 0) + 1
+        cur3.execute("""
+            UPDATE image_results SET reprocess_count = %s WHERE sku_id = %s
+        """, (new_rc, sku_id))
+        db3.commit()
+    finally:
+        cur3.close()
+        db3.close()
+
+    # Build new_url with cache-busting version param
+    result_replaced = []
+    for item in replaced:
+        sep     = "&" if "?" in item["base_url"] else "?"
+        new_url = f"{item['base_url']}{sep}v={new_rc}"
+        result_replaced.append({"filename": item["filename"], "new_url": new_url})
+
+    return jsonify({
+        "ok":              True,
+        "replaced":        result_replaced,
+        "skipped":         skipped,
+        "uploaded_by":     uploaded_by,
+        "reprocess_count": new_rc,
+    })
+
+
 # ── SKU-level bulk download (original images → ZIP) ──────────
 
 @app.route("/api/download-sku-originals/<path:sku_id>")

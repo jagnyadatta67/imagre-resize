@@ -118,6 +118,18 @@
         {% endif %}
 
         {% if show_reprocess %}
+        <!-- ⬆ Bulk Upload -->
+        <button
+          data-sku="{{ sku.sku_id }}"
+          onclick="openBulkUploadModal(this)"
+          style="font-size:.78rem; padding:5px 14px; border-radius:8px;
+                 border:1px solid #c4b5fd; background:#f5f3ff; color:#6d28d9;
+                 cursor:pointer; transition:all .15s; font-weight:600;"
+          onmouseover="this.style.background='#ede9fe';this.style.borderColor='#a78bfa';"
+          onmouseout="this.style.background='#f5f3ff';this.style.borderColor='#c4b5fd';">
+          ⬆ Bulk Upload
+        </button>
+
         <!-- ⬇ Download Originals -->
         <a id="dl-btn-{{ loop.index }}"
            href="/api/download-sku-originals/{{ sku.sku_id | urlencode }}"
@@ -1036,6 +1048,71 @@ FAILED_SKU_ID,,true</pre>
 
 
 <!-- ════════════════════════════════════════════════════════════
+     BULK UPLOAD MODAL (drag & drop)
+     ════════════════════════════════════════════════════════════ -->
+<div id="bu-overlay" onclick="if(event.target===this)closeBulkUploadModal()" style="
+  display:none; position:fixed; inset:0; z-index:10000;
+  background:rgba(0,0,0,.62); align-items:center; justify-content:center;">
+
+  <div onclick="event.stopPropagation()" style="
+    background:#fff; border-radius:18px; padding:28px 30px;
+    width:100%; max-width:560px; margin:16px; max-height:90vh; overflow-y:auto;
+    box-shadow:0 24px 80px rgba(0,0,0,.32);">
+
+    <!-- Header -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:18px;">
+      <div>
+        <div style="font-size:1rem; font-weight:700; color:#1e293b; margin-bottom:3px;">⬆ Bulk Upload Images</div>
+        <div id="bu-sku-label" style="font-size:.72rem; font-family:monospace; color:#6d28d9;"></div>
+      </div>
+      <button onclick="closeBulkUploadModal()" style="background:none; border:none; font-size:1.4rem; color:#94a3b8; cursor:pointer; line-height:1; padding:0; margin-left:12px;">✕</button>
+    </div>
+
+    <!-- Drag & drop zone -->
+    <div id="bu-drop-zone"
+         ondragover="event.preventDefault(); document.getElementById('bu-drop-zone').style.borderColor='#6366f1'; document.getElementById('bu-drop-zone').style.background='#eef2ff';"
+         ondragleave="document.getElementById('bu-drop-zone').style.borderColor='#c4b5fd'; document.getElementById('bu-drop-zone').style.background='#f5f3ff';"
+         ondrop="_buHandleDrop(event)"
+         onclick="document.getElementById('bu-file-input').click()"
+         style="border:2px dashed #c4b5fd; border-radius:12px; padding:28px 20px;
+                text-align:center; cursor:pointer; transition:all .2s; background:#f5f3ff;
+                margin-bottom:16px;">
+      <div style="font-size:2.2rem; margin-bottom:8px;">📂</div>
+      <div style="font-size:.9rem; font-weight:600; color:#1e293b; margin-bottom:4px;">Drag & drop images here</div>
+      <div style="font-size:.75rem; color:#94a3b8;">or click to browse &nbsp;·&nbsp; JPG / PNG only &nbsp;·&nbsp; max 20MB each</div>
+    </div>
+    <input id="bu-file-input" type="file" multiple accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+           style="display:none;" onchange="_buHandleFiles(this.files)">
+
+    <!-- Selected file list -->
+    <div id="bu-file-list" style="display:none; margin-bottom:16px;">
+      <div style="font-size:.75rem; font-weight:600; color:#475569; margin-bottom:8px;">
+        Selected files: <span id="bu-file-count" style="color:#6d28d9;"></span>
+      </div>
+      <div id="bu-file-rows" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto;"></div>
+    </div>
+
+    <!-- Upload button -->
+    <button id="bu-submit" onclick="submitBulkUpload()" style="
+      width:100%; padding:13px; border-radius:10px; border:none;
+      background:#6d28d9; color:#fff; font-size:.9rem; font-weight:600;
+      cursor:pointer; transition:opacity .15s; display:none;">
+      ⬆ Upload Images
+    </button>
+
+    <!-- Progress / result -->
+    <div id="bu-status" style="display:none; margin-top:14px;">
+      <div style="font-size:.78rem; font-weight:600; color:#475569; margin-bottom:8px;">Uploading…</div>
+      <div id="bu-progress-rows" style="display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+
+    <div id="bu-result" style="display:none; margin-top:14px;"></div>
+
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════
      LIGHTBOX
      ════════════════════════════════════════════════════════════ -->
 <div id="biz-lightbox" onclick="closeLightbox()" style="
@@ -1276,6 +1353,186 @@ function _renderQcSkuPanel(username) {
 
   // Scroll panel into view smoothly
   setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 80);
+}
+
+// ════════════════════════════════════════════════════════════
+// BULK UPLOAD MODAL
+// ════════════════════════════════════════════════════════════
+
+let _buSku      = '';
+let _buFiles    = [];   // validated File objects
+let _buSkuCard  = null; // the .card DOM element for this SKU
+
+function openBulkUploadModal(btn) {
+  _buSku     = btn.dataset.sku || '';
+  _buFiles   = [];
+  _buSkuCard = btn.closest('.card');
+
+  document.getElementById('bu-sku-label').textContent       = _buSku;
+  document.getElementById('bu-file-list').style.display     = 'none';
+  document.getElementById('bu-file-rows').innerHTML         = '';
+  document.getElementById('bu-submit').style.display        = 'none';
+  document.getElementById('bu-status').style.display        = 'none';
+  document.getElementById('bu-result').style.display        = 'none';
+  document.getElementById('bu-file-input').value            = '';
+
+  // Reset drop zone
+  const dz = document.getElementById('bu-drop-zone');
+  dz.style.borderColor = '#c4b5fd';
+  dz.style.background  = '#f5f3ff';
+
+  const ov = document.getElementById('bu-overlay');
+  ov.style.display = 'flex';
+}
+
+function closeBulkUploadModal() {
+  document.getElementById('bu-overlay').style.display = 'none';
+  _buSku = ''; _buFiles = []; _buSkuCard = null;
+}
+
+function _buHandleDrop(e) {
+  e.preventDefault();
+  const dz = document.getElementById('bu-drop-zone');
+  dz.style.borderColor = '#c4b5fd';
+  dz.style.background  = '#f5f3ff';
+  _buHandleFiles(e.dataTransfer.files);
+}
+
+function _buHandleFiles(fileList) {
+  const ALLOWED = ['image/jpeg', 'image/png'];
+  const MAX_MB  = 20;
+  _buFiles = [];
+  const rows = document.getElementById('bu-file-rows');
+  rows.innerHTML = '';
+
+  Array.from(fileList).forEach(f => {
+    const ok   = ALLOWED.includes(f.type) && f.size <= MAX_MB * 1024 * 1024;
+    const size = (f.size / 1024 / 1024).toFixed(2);
+    const icon = ok ? '📄' : '⚠️';
+    const note = !ALLOWED.includes(f.type) ? 'Not JPG/PNG' : `${size} MB — too large`;
+
+    if (ok) _buFiles.push(f);
+
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex; align-items:center; gap:10px; padding:7px 10px;
+      border-radius:8px; border:1px solid ${ok ? '#e2e8f0' : '#fecaca'};
+      background:${ok ? '#f8fafc' : '#fef2f2'};`;
+    row.innerHTML = `
+      <span style="font-size:1rem;">${icon}</span>
+      <span style="font-family:monospace; font-size:.78rem; color:#1e293b; flex:1;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${f.name}</span>
+      <span style="font-size:.7rem; color:${ok ? '#94a3b8' : '#ef4444'}; white-space:nowrap;">
+        ${ok ? size + ' MB' : note}
+      </span>`;
+    rows.appendChild(row);
+  });
+
+  const count = _buFiles.length;
+  document.getElementById('bu-file-count').textContent = `${count} valid file${count !== 1 ? 's' : ''}`;
+  document.getElementById('bu-file-list').style.display = 'block';
+  document.getElementById('bu-submit').style.display    = count > 0 ? 'block' : 'none';
+}
+
+function submitBulkUpload() {
+  if (!_buFiles.length || !_buSku) return;
+
+  const submitBtn = document.getElementById('bu-submit');
+  submitBtn.disabled    = true;
+  submitBtn.style.opacity = '0.6';
+
+  // Show per-file progress rows
+  const progressRows = document.getElementById('bu-progress-rows');
+  progressRows.innerHTML = '';
+  _buFiles.forEach(f => {
+    const row = document.createElement('div');
+    row.id = `bu-prog-${f.name}`;
+    row.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:8px; background:#f8fafc; border:1px solid #e2e8f0; font-size:.78rem;';
+    row.innerHTML = `
+      <span class="bu-prog-icon" style="font-size:.9rem;">⏳</span>
+      <span style="font-family:monospace; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#1e293b;">${f.name}</span>
+      <span class="bu-prog-note" style="color:#94a3b8; font-size:.7rem;">waiting…</span>`;
+    progressRows.appendChild(row);
+  });
+
+  document.getElementById('bu-file-list').style.display = 'none';
+  document.getElementById('bu-status').style.display    = 'block';
+  document.getElementById('bu-result').style.display    = 'none';
+
+  const fd = new FormData();
+  fd.append('sku_id', _buSku);
+  _buFiles.forEach(f => fd.append('files', f, f.name));
+
+  fetch('/api/bulk-upload-images', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('bu-status').style.display = 'none';
+      if (!data.ok) {
+        _buShowResult(false, data.error || 'Upload failed');
+        return;
+      }
+
+      // Update per-file progress rows with final status
+      (data.replaced || []).forEach(item => _buSetRowStatus(item.filename, '✅', item.filename, '#16a34a'));
+      (data.skipped  || []).forEach(fname  => _buSetRowStatus(fname, '⚠️', 'no match — skipped', '#d97706'));
+
+      // Refresh image thumbnails in the SKU card
+      (data.replaced || []).forEach(item => {
+        const btn = _buSkuCard
+          ? _buSkuCard.querySelector(`[data-filename="${CSS.escape(item.filename)}"]`)
+          : document.querySelector(`[data-sku="${CSS.escape(_buSku)}"][data-filename="${CSS.escape(item.filename)}"]`);
+        if (!btn) return;
+        const img = btn.closest('.img-card')?.querySelector('.biz-img');
+        if (img && item.new_url) {
+          img.src                 = item.new_url;
+          img.dataset.processed   = item.new_url;
+          img.dataset.mode        = 'processed';
+          const card = img.closest('.img-card');
+          if (card) card.querySelectorAll('.img-tab-btn').forEach(t => t.classList.toggle('active', t.dataset.tab === 'processed'));
+        }
+      });
+
+      // Show summary
+      const r = data.replaced?.length || 0;
+      const s = data.skipped?.length  || 0;
+      document.getElementById('bu-result').style.display = 'block';
+      document.getElementById('bu-result').innerHTML = `
+        <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px;">
+          <div style="font-weight:700; color:#16a34a; margin-bottom:8px;">Upload complete</div>
+          <div style="display:flex; gap:16px; flex-wrap:wrap; font-size:.82rem;">
+            <span style="color:#16a34a; font-weight:600;">✅ ${r} image${r !== 1 ? 's' : ''} replaced</span>
+            ${s ? `<span style="color:#d97706; font-weight:600;">⚠️ ${s} skipped (filename not found)</span>` : ''}
+          </div>
+          <div style="font-size:.72rem; color:#94a3b8; margin-top:6px;">Uploaded by <strong>${data.uploaded_by}</strong></div>
+        </div>`;
+
+      submitBtn.disabled      = false;
+      submitBtn.style.opacity = '1';
+      submitBtn.textContent   = '⬆ Upload More';
+      submitBtn.style.display = 'block';
+    })
+    .catch(err => {
+      document.getElementById('bu-status').style.display = 'none';
+      _buShowResult(false, 'Network error: ' + err.message);
+      submitBtn.disabled      = false;
+      submitBtn.style.opacity = '1';
+    });
+}
+
+function _buSetRowStatus(filename, icon, note, color) {
+  const row = document.getElementById(`bu-prog-${filename}`);
+  if (!row) return;
+  row.querySelector('.bu-prog-icon').textContent = icon;
+  const n = row.querySelector('.bu-prog-note');
+  n.textContent  = note;
+  n.style.color  = color;
+}
+
+function _buShowResult(ok, msg) {
+  const el = document.getElementById('bu-result');
+  el.style.display = 'block';
+  el.innerHTML = ok
+    ? `<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:14px; color:#16a34a; font-weight:600;">${msg}</div>`
+    : `<div style="background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:14px; color:#dc2626; font-weight:600;">${msg}</div>`;
 }
 
 // ── SKU bulk download ─────────────────────────────────────────
