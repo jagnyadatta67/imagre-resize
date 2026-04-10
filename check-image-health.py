@@ -69,7 +69,7 @@ OUTPUT_DIR      = BASE_DIR / "image_health"
 CHECKPOINT_FILE = OUTPUT_DIR / ".checked.txt"
 SUMMARY_FILE    = OUTPUT_DIR / "health_summary.txt"
 
-UNBXD_ROWS        = 1000
+UNBXD_ROWS        = 100
 DEFAULT_WORKERS   = 50
 HEAD_TIMEOUT      = 10      # seconds per HEAD request
 PAGE_DELAY        = 0.25    # seconds between Unbxd pages
