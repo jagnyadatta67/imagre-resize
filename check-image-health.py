@@ -3,26 +3,29 @@ check-image-health.py — Verify ALL live product images are accessible on the C
 
 Flow
 ----
-  1. Paginate Unbxd search API (rows=1000) to collect all productCode + imageUrl
-  2. For each product, derive CDN check URL from the imageUrl:
-       https://{domain}/cdn-cgi/image/h=550,w=550,q=85,fit=cover/{path}
-  3. Fire parallel HEAD requests (default 50 workers)
-  4. Log non-200 responses in real time
-  5. Write broken_images.csv + health_summary.txt to image_health/
+  1. Paginate Unbxd search API (rows=1000) — fetch productCode, gallaryImages, allCategories
+  2. For each SKU, check gallery images sequentially via HEAD requests
+     — stop at the first broken image and mark the SKU as broken
+  3. Fire parallel workers (ThreadPoolExecutor), one task per SKU
+  4. Broken SKUs written to image_health/{l2-category}.csv  (productCode + container)
+  5. health_summary.txt written with per-category breakdown
 
 Features
 --------
   - Auto-paginates all ~42 pages (41,990 products)
-  - Parallel HEAD workers (ThreadPoolExecutor)
+  - Parallel SKU workers (ThreadPoolExecutor)
+  - Per-SKU sequential gallery check — bails on first broken image
+  - Per-L2-category broken CSVs  (e.g. men-tops.csv, women-dresses.csv)
   - Resume support (image_health/.checked.txt checkpoint)
   - tqdm progress bar
-  - Only checks _01 (first/listing) image per product
 
 Usage
 -----
   python check-image-health.py
   python check-image-health.py --workers 100
-  python check-image-health.py --pages 1            # test with 1 page only
+  python check-image-health.py --pages 1            # test with 1 page (~1000 products)
+  python check-image-health.py --pages 0            # all pages
+  python check-image-health.py --use-new            # check lifestyle-new folder
   python check-image-health.py --no-resume
   python check-image-health.py --debug
 """
@@ -36,8 +39,10 @@ import os
 import sys
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from urllib.parse import urlparse
 import requests
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
@@ -62,17 +67,32 @@ UNBXD_SEARCH_URL = f"https://search.unbxd.io/{UNBXD_API_KEY}/{UNBXD_SITE_KEY}/se
 
 OUTPUT_DIR      = BASE_DIR / "image_health"
 CHECKPOINT_FILE = OUTPUT_DIR / ".checked.txt"
-BROKEN_CSV      = OUTPUT_DIR / "broken_images.csv"
 SUMMARY_FILE    = OUTPUT_DIR / "health_summary.txt"
 
-UNBXD_ROWS          = 1000
-DEFAULT_WORKERS     = 50
-HEAD_TIMEOUT        = 10       # seconds per HEAD request
-PAGE_DELAY          = 0.25     # seconds between Unbxd pages
-MAX_RETRIES_UNBXD   = 3
-RETRY_DELAY_UNBXD   = 2.0
+UNBXD_ROWS        = 1000
+DEFAULT_WORKERS   = 50
+HEAD_TIMEOUT      = 10      # seconds per HEAD request
+PAGE_DELAY        = 0.25    # seconds between Unbxd pages
+MAX_RETRIES_UNBXD = 3
+RETRY_DELAY_UNBXD = 2.0
 
-# Unbxd request headers (matches browser fingerprint)
+# ── Domain → Azure container mapping ──────────────────────────────────────────
+DOMAIN_TO_CONTAINER = {
+    "media-ea.landmarkshops.in": "in-media-ea",
+    "media.landmarkshops.in":    "in-media",
+    "media-us.landmarkshops.in": "in-media-us",
+    "media-uk.landmarkshops.in": "in-media-uk",
+}
+
+def url_to_container(url: str) -> str:
+    """Extract Azure container name from a gallery image URL domain."""
+    try:
+        domain = urlparse(url).netloc
+        return DOMAIN_TO_CONTAINER.get(domain, domain or "unknown")
+    except Exception:
+        return "unknown"
+
+# ── Unbxd request headers ──────────────────────────────────────────────────────
 UNBXD_HEADERS = {
     "accept":          "*/*",
     "accept-language": "en-US,en;q=0.9",
@@ -88,18 +108,21 @@ UNBXD_HEADERS = {
 }
 
 
-
 # ── Unbxd Paginator ────────────────────────────────────────────────────────────
 def fetch_all_products(max_pages: int | None = None) -> list[dict]:
     """
     Paginate Unbxd search API and collect all products.
 
     Returns list of:
-      {"productCode": "...", "imageUrl": "...", "check_url": "..."}
+      {
+        "productCode":  "...",
+        "gallery_urls": ["url1", "url2", ...],
+        "l2_category":  "men-tops"          # allCategories[1], fallback "unknown"
+      }
     """
     products_out: list[dict] = []
-    page   = 1
-    total  = None
+    page  = 1
+    total = None
 
     session = requests.Session()
     session.mount("https://", HTTPAdapter(pool_connections=2, pool_maxsize=2))
@@ -110,13 +133,13 @@ def fetch_all_products(max_pages: int | None = None) -> list[dict]:
             break
 
         params = [
-            ("rows",              UNBXD_ROWS),
-            ("page",              page),
-            ("q",                 "*"),
-            ("facet",             "false"),
-            ("fields",            "productCode,imageUrl"),
-            ("filter",            'inStock:"1"'),
-            ("filter",            'approvalStatus:"1"'),
+            ("rows",   UNBXD_ROWS),
+            ("page",   page),
+            ("q",      "*"),
+            ("facet",  "false"),
+            ("fields", "productCode,gallaryImages,allCategories"),
+            ("filter", 'inStock:"1"'),
+            ("filter", 'approvalStatus:"1"'),
         ]
 
         data = None
@@ -158,15 +181,22 @@ def fetch_all_products(max_pages: int | None = None) -> list[dict]:
             if not product_code:
                 continue
 
-            image_urls = p.get("imageUrl") or []
-            first_url  = image_urls[0] if isinstance(image_urls, list) and image_urls else ""
-            if isinstance(first_url, list):
-                first_url = first_url[0] if first_url else ""
+            gallery = p.get("gallaryImages") or []
+            if not isinstance(gallery, list):
+                gallery = [gallery] if gallery else []
+
+            # L2 = the entry with exactly 2 hyphen-separated parts
+            # e.g. ["men", "men-tops", "men-tops-tshirts"] → "men-tops"
+            all_cats    = p.get("allCategories") or []
+            l2_category = next(
+                (c.strip() for c in all_cats if len(c.strip().split("-")) == 2),
+                all_cats[0].strip() if all_cats else "unknown"   # fallback to L1 or unknown
+            )
 
             products_out.append({
-                "productCode": product_code,
-                "imageUrl":    first_url,
-                "check_url":   first_url,   # hit imageUrl directly, no CDN transform
+                "productCode":  product_code,
+                "gallery_urls": gallery,
+                "l2_category":  l2_category,
             })
 
         log.info(f"Page {page}: {len(products)} products  [total collected: {len(products_out)} / {total}]")
@@ -197,57 +227,68 @@ def append_checkpoint(codes: list[str]) -> None:
             fh.write(c + "\n")
 
 
-# ── Broken CSV writer ──────────────────────────────────────────────────────────
+# ── Per-category broken CSV writer ────────────────────────────────────────────
 _csv_lock = threading.Lock()
 
-def write_broken_row(row: dict) -> None:
-    """Append one broken image row to broken_images.csv (thread-safe)."""
+def write_broken_row(product_code: str, container: str, l2_category: str) -> None:
+    """
+    Append one broken SKU to image_health/{l2_category}.csv (thread-safe).
+    Columns: productCode, container
+    """
+    csv_path = OUTPUT_DIR / f"{l2_category}.csv"
     with _csv_lock:
-        is_new = not BROKEN_CSV.exists()
-        with open(BROKEN_CSV, "a", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=["productCode", "imageUrl", "check_url", "status_code", "error"])
+        is_new = not csv_path.exists()
+        with open(csv_path, "a", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=["productCode", "container"])
             if is_new:
                 writer.writeheader()
-            writer.writerow(row)
+            writer.writerow({"productCode": product_code, "container": container})
 
 
 # ── HEAD Checker ───────────────────────────────────────────────────────────────
-def check_image(product: dict, session: requests.Session) -> dict:
+def check_sku(product: dict, session: requests.Session) -> dict:
     """
-    Fire a HEAD request for one product's CDN URL.
-    Returns result dict with status_code / error.
+    Check all gallery images for a SKU sequentially.
+    Stops at the first broken image and marks the SKU as broken.
+
+    Returns:
+      {"productCode": "...", "ok": bool, "error": "", "container": "...", "l2_category": "..."}
     """
-    check_url = product["check_url"]
-    result = {
-        "productCode": product["productCode"],
-        "imageUrl":    product["imageUrl"],
-        "check_url":   check_url,
-        "status_code": None,
-        "error":       "",
-        "ok":          False,
-    }
+    product_code = product["productCode"]
+    gallery_urls = product["gallery_urls"]
+    l2_category  = product["l2_category"]
 
-    if not check_url:
-        result["error"] = "no_url"
-        return result
+    if not gallery_urls:
+        return {"productCode": product_code, "ok": False, "error": "no_url",
+                "container": "", "l2_category": l2_category}
 
-    try:
-        resp = session.head(check_url, timeout=HEAD_TIMEOUT, allow_redirects=True)
-        result["status_code"] = resp.status_code
-        result["ok"]          = (resp.status_code == 200)
-        if not result["ok"]:
-            log.warning(f"[{resp.status_code}] {product['productCode']} → {check_url}")
-    except requests.exceptions.Timeout:
-        result["error"] = "timeout"
-        log.warning(f"[TIMEOUT] {product['productCode']} → {check_url}")
-    except requests.exceptions.ConnectionError as exc:
-        result["error"] = f"conn_error: {exc}"
-        log.warning(f"[CONN_ERR] {product['productCode']} → {check_url}")
-    except Exception as exc:
-        result["error"] = str(exc)
-        log.warning(f"[ERROR] {product['productCode']} → {exc}")
+    # container derived from first URL domain (unchanged by --use-new)
+    container = url_to_container(gallery_urls[0])
 
-    return result
+    for url in gallery_urls:
+        if not url:
+            continue
+        try:
+            resp = session.head(url, timeout=HEAD_TIMEOUT, allow_redirects=True)
+            if resp.status_code != 200:
+                log.warning(f"[{resp.status_code}] {product_code} ({l2_category}) → {url}")
+                return {"productCode": product_code, "ok": False, "error": str(resp.status_code),
+                        "container": container, "l2_category": l2_category}
+        except requests.exceptions.Timeout:
+            log.warning(f"[TIMEOUT] {product_code} ({l2_category}) → {url}")
+            return {"productCode": product_code, "ok": False, "error": "timeout",
+                    "container": container, "l2_category": l2_category}
+        except requests.exceptions.ConnectionError as exc:
+            log.warning(f"[CONN_ERR] {product_code} ({l2_category}) → {url}")
+            return {"productCode": product_code, "ok": False, "error": f"conn_error: {exc}",
+                    "container": container, "l2_category": l2_category}
+        except Exception as exc:
+            log.warning(f"[ERROR] {product_code} ({l2_category}) → {exc}")
+            return {"productCode": product_code, "ok": False, "error": str(exc),
+                    "container": container, "l2_category": l2_category}
+
+    return {"productCode": product_code, "ok": True, "error": "",
+            "container": container, "l2_category": l2_category}
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -257,10 +298,12 @@ def main() -> None:
     )
     parser.add_argument("--workers",   "-w", type=int, default=DEFAULT_WORKERS,
                         help=f"Parallel HEAD request workers (default: {DEFAULT_WORKERS})")
-    parser.add_argument("--pages",     "-p", type=int, default=None,
-                        help="Limit to N pages from Unbxd (default: all pages)")
+    parser.add_argument("--pages",     "-p", type=int, default=1,
+                        help="Limit to N pages from Unbxd (default: 1 page = ~1000 products; use 0 for all pages)")
     parser.add_argument("--no-resume", action="store_true",
                         help="Ignore checkpoint and recheck everything")
+    parser.add_argument("--use-new",   action="store_true",
+                        help="Rewrite gallery URLs: /lifestyle/ → /lifestyle-new/ before checking")
     parser.add_argument("--debug",     action="store_true",
                         help="Enable DEBUG level logging")
     args = parser.parse_args()
@@ -273,15 +316,25 @@ def main() -> None:
     log.info("=" * 60)
     log.info("check-image-health  (Unbxd → CDN HEAD check)")
     log.info(f"  Workers    : {args.workers}")
-    log.info(f"  Pages      : {args.pages or 'all'}")
+    pages_display = f"{args.pages} page(s) (~{args.pages * UNBXD_ROWS:,} products max)" if args.pages else "all pages"
+    log.info(f"  Pages      : {pages_display}")
     log.info(f"  Resume     : {not args.no_resume}")
+    log.info(f"  Use new    : {args.use_new}  (/lifestyle/ → /lifestyle-new/)" if args.use_new else "  Use new    : False")
     log.info(f"  Output dir : {OUTPUT_DIR}")
     log.info("=" * 60)
 
     # ── Step 1: Fetch all products from Unbxd ──────────────────────────────────
     log.info("Fetching product list from Unbxd...")
-    all_products = fetch_all_products(max_pages=args.pages)
+    all_products = fetch_all_products(max_pages=args.pages or None)
     log.info(f"Fetched {len(all_products)} products total")
+
+    # ── Step 1b: Rewrite URLs if --use-new ─────────────────────────────────────
+    if args.use_new:
+        for p in all_products:
+            p["gallery_urls"] = [
+                u.replace("/lifestyle/", "/lifestyle-new/") for u in p["gallery_urls"]
+            ]
+        log.info("URLs rewritten: /lifestyle/ → /lifestyle-new/")
 
     # ── Step 2: Apply checkpoint ───────────────────────────────────────────────
     if args.no_resume:
@@ -301,7 +354,6 @@ def main() -> None:
     # ── Step 3: Parallel HEAD checks ──────────────────────────────────────────
     log.info(f"Starting HEAD checks for {len(todo)} products with {args.workers} workers...")
 
-    # Shared HTTP session for HEAD requests
     head_session = requests.Session()
     adapter = HTTPAdapter(
         pool_connections = args.workers,
@@ -311,13 +363,13 @@ def main() -> None:
     head_session.mount("https://", adapter)
     head_session.mount("http://",  adapter)
 
-    counters = {"ok": 0, "broken": 0, "no_url": 0}
+    counters         = {"ok": 0, "broken": 0, "no_url": 0}
+    category_broken  = defaultdict(int)   # l2_category → broken count
     checked_codes: list[str] = []
 
-    # tqdm progress bar
     try:
         from tqdm import tqdm
-        progress = tqdm(total=len(todo), unit="img", desc="Checking CDN", dynamic_ncols=True)
+        progress = tqdm(total=len(todo), unit="sku", desc="Checking CDN", dynamic_ncols=True)
         def tick(): progress.update(1)
         def close_progress(): progress.close()
     except ImportError:
@@ -332,7 +384,7 @@ def main() -> None:
 
     with ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="head") as ex:
         futures = {
-            ex.submit(check_image, product, head_session): product
+            ex.submit(check_sku, product, head_session): product
             for product in todo
         }
         for future in as_completed(futures):
@@ -341,7 +393,13 @@ def main() -> None:
                 result = future.result()
             except Exception as exc:
                 log.error(f"Unexpected error for {product['productCode']}: {exc}")
-                result = {**product, "status_code": None, "error": str(exc), "ok": False}
+                result = {
+                    "productCode": product["productCode"],
+                    "ok":          False,
+                    "error":       str(exc),
+                    "container":   "",
+                    "l2_category": product.get("l2_category", "unknown"),
+                }
 
             checked_codes.append(result["productCode"])
 
@@ -351,13 +409,9 @@ def main() -> None:
                 counters["ok"] += 1
             else:
                 counters["broken"] += 1
-                write_broken_row({
-                    "productCode": result["productCode"],
-                    "imageUrl":    result["imageUrl"],
-                    "check_url":   result["check_url"],
-                    "status_code": result["status_code"],
-                    "error":       result["error"],
-                })
+                cat = result.get("l2_category", "unknown")
+                category_broken[cat] += 1
+                write_broken_row(result["productCode"], result.get("container", ""), cat)
 
             # Checkpoint every 500 completions
             if len(checked_codes) % 500 == 0:
@@ -384,12 +438,23 @@ def main() -> None:
         "=" * 55,
         f"  Total products    : {len(all_products)}",
         f"  Checked this run  : {total_checked}",
-        f"  ✅ OK (200)        : {counters['ok']}",
-        f"  ❌ Broken          : {counters['broken']}",
-        f"  ⚠️  No URL          : {counters['no_url']}",
+        f"  OK (200)          : {counters['ok']}",
+        f"  Broken            : {counters['broken']}",
+        f"  No URL            : {counters['no_url']}",
         f"  Pass rate         : {pass_rate:.2f}%",
         "=" * 55,
-        f"  broken_images.csv : {BROKEN_CSV}",
+        "  BROKEN BY L2 CATEGORY",
+        "-" * 55,
+    ]
+
+    for cat in sorted(category_broken):
+        count    = category_broken[cat]
+        csv_file = OUTPUT_DIR / f"{cat}.csv"
+        summary_lines.append(f"  {cat:<35} {count:>5}  →  {csv_file.name}")
+
+    summary_lines += [
+        "=" * 55,
+        f"  Output folder : {OUTPUT_DIR}",
         "=" * 55,
     ]
 
