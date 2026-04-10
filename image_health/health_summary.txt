@@ -1,0 +1,17 @@
+=======================================================
+IMAGE HEALTH CHECK — SUMMARY
+=======================================================
+  Total products    : 100
+  Checked this run  : 100
+  OK (200)          : 99
+  Needs Transform   : 0
+  Partial Broken    : 1
+  No URL            : 0
+  Pass rate         : 99.00%
+=======================================================
+  BROKEN BY L2 CATEGORY
+-------------------------------------------------------
+  men-tops                                1  →  men-tops.csv
+=======================================================
+  Output folder : /Users/jagnyapanigrahi/Documents/ImageTranform/Automatethis/bulk-cloudinary/image_health
+=======================================================

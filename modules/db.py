@@ -210,6 +210,46 @@ def init_db() -> None:
             else:
                 raise
 
+    # ── Broken image health (from check-image-health runs) ───────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS broken_image_health (
+            id           INT AUTO_INCREMENT PRIMARY KEY,
+            sku_id       VARCHAR(300) NOT NULL,
+            category     VARCHAR(100),
+            broken_url   TEXT         NOT NULL,
+            checked_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_bih_sku      (sku_id),
+            INDEX idx_bih_category (category)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+
+    # ── SKUs that need full transformation (first image broken) ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS sku_needs_transformation (
+            id           INT AUTO_INCREMENT PRIMARY KEY,
+            sku_id       VARCHAR(300) NOT NULL,
+            category     VARCHAR(100),
+            container    VARCHAR(100),
+            broken_url   TEXT,
+            status       VARCHAR(20)  DEFAULT 'pending',
+            checked_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+            processed_at DATETIME     NULL,
+            UNIQUE KEY   uq_snt_sku      (sku_id),
+            INDEX        idx_snt_status   (status),
+            INDEX        idx_snt_category (category)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    """)
+
+    # Add image_position to broken_image_health if upgrading
+    try:
+        cur.execute("ALTER TABLE broken_image_health ADD COLUMN image_position INT DEFAULT 1")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass
+        else:
+            raise
+
     conn.commit()
     cur.close()
     conn.close()
@@ -599,3 +639,224 @@ def update_reprocess_transform(
     cur.close()
     conn.close()
     return new_version
+
+
+# ============================================================
+# BROKEN IMAGE HEALTH HELPERS
+# ============================================================
+
+def upsert_broken_images(rows: list[dict]) -> int:
+    """
+    Bulk-upsert broken image rows into broken_image_health.
+    Each dict must have: sku_id, category, broken_url.
+    Optional: image_position (int, 1-based, defaults to 1).
+    Returns number of rows inserted/replaced.
+    """
+    if not rows:
+        return 0
+    conn = _conn()
+    cur  = conn.cursor()
+    data = [
+        (r["sku_id"], r.get("category", ""), r["broken_url"], r.get("image_position", 1))
+        for r in rows
+    ]
+    cur.executemany("""
+        REPLACE INTO broken_image_health (sku_id, category, broken_url, image_position, checked_at)
+        VALUES (%s, %s, %s, %s, NOW())
+    """, data)
+    conn.commit()
+    affected = cur.rowcount
+    cur.close()
+    conn.close()
+    log.info(f"broken_image_health: upserted {affected} rows")
+    return affected
+
+
+def get_broken_images(category: Optional[str] = None, search: Optional[str] = None,
+                      limit: int = 500, offset: int = 0) -> tuple[list[dict], int]:
+    """
+    Fetch broken image rows with optional category/search filter.
+    Returns (rows, total_count).
+    """
+    conn  = _conn()
+    cur   = conn.cursor(dictionary=True)
+    where = []
+    params: list = []
+    if category:
+        where.append("category = %s")
+        params.append(category)
+    if search:
+        where.append("sku_id LIKE %s")
+        params.append(f"%{search}%")
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    cur.execute(f"SELECT COUNT(*) AS cnt FROM broken_image_health {where_sql}", params)
+    total = cur.fetchone()["cnt"]
+
+    cur.execute(
+        f"SELECT sku_id, category, broken_url, checked_at "
+        f"FROM broken_image_health {where_sql} "
+        f"ORDER BY category, sku_id "
+        f"LIMIT %s OFFSET %s",
+        params + [limit, offset]
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows, total
+
+
+def get_broken_image_categories() -> list[dict]:
+    """Return distinct categories with counts, sorted by count desc."""
+    conn = _conn()
+    cur  = conn.cursor(dictionary=True)
+    cur.execute("""
+        SELECT category, COUNT(*) AS cnt
+        FROM   broken_image_health
+        GROUP  BY category
+        ORDER  BY cnt DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+# ============================================================
+# SKU NEEDS TRANSFORMATION HELPERS
+# ============================================================
+
+def upsert_needs_transformation(rows: list[dict]) -> int:
+    """
+    Bulk-upsert rows into sku_needs_transformation.
+    Each dict must have: sku_id, category, container, broken_url.
+    Uses INSERT ... ON DUPLICATE KEY UPDATE so re-runs don't reset 'done' status.
+    Returns number of rows affected.
+    """
+    if not rows:
+        return 0
+    conn = _conn()
+    cur  = conn.cursor()
+    data = [
+        (r["sku_id"], r.get("category", ""), r.get("container", ""), r.get("broken_url", ""))
+        for r in rows
+    ]
+    cur.executemany("""
+        INSERT INTO sku_needs_transformation (sku_id, category, container, broken_url, status, checked_at)
+        VALUES (%s, %s, %s, %s, 'pending', NOW())
+        ON DUPLICATE KEY UPDATE
+            category   = VALUES(category),
+            container  = VALUES(container),
+            broken_url = VALUES(broken_url),
+            status     = IF(status = 'done', 'done', 'pending'),
+            checked_at = NOW()
+    """, data)
+    conn.commit()
+    affected = cur.rowcount
+    cur.close()
+    conn.close()
+    log.info(f"sku_needs_transformation: upserted {affected} rows")
+    return affected
+
+
+def get_pending_transformation_categories() -> list[dict]:
+    """Return [{category, cnt}] for all pending SKUs, sorted by count desc."""
+    conn = _conn()
+    cur  = conn.cursor(dictionary=True)
+    cur.execute("""
+        SELECT category, COUNT(*) AS cnt
+        FROM   sku_needs_transformation
+        WHERE  status = 'pending'
+        GROUP  BY category
+        ORDER  BY cnt DESC
+    """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def get_pending_transformation_skus(category: Optional[str] = None) -> list[dict]:
+    """
+    Return [{sku_id, container, category}] for pending SKUs.
+    If category is given, filter to that category only.
+    """
+    conn  = _conn()
+    cur   = conn.cursor(dictionary=True)
+    if category:
+        cur.execute("""
+            SELECT sku_id, container, category
+            FROM   sku_needs_transformation
+            WHERE  status = 'pending' AND category = %s
+            ORDER  BY sku_id
+        """, (category,))
+    else:
+        cur.execute("""
+            SELECT sku_id, container, category
+            FROM   sku_needs_transformation
+            WHERE  status = 'pending'
+            ORDER  BY category, sku_id
+        """)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def mark_transformations_processing(sku_ids: list[str]) -> None:
+    """Set status='processing' for a batch of sku_ids."""
+    if not sku_ids:
+        return
+    conn = _conn()
+    cur  = conn.cursor()
+    placeholders = ",".join(["%s"] * len(sku_ids))
+    cur.execute(
+        f"UPDATE sku_needs_transformation SET status='processing' WHERE sku_id IN ({placeholders})",
+        sku_ids
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def mark_transformations_done_by_run(run_id: str) -> None:
+    """
+    Called after a pipeline run completes.
+    SKUs in sku_needs_transformation that are now 'done' in sku_results → mark done.
+    SKUs that failed → reset back to 'pending' so they can be retried.
+    """
+    conn = _conn()
+    cur  = conn.cursor()
+    # Mark done: status='processing' AND sku_results.status='done'
+    cur.execute("""
+        UPDATE sku_needs_transformation snt
+        JOIN   sku_results sr ON sr.sku_id = snt.sku_id
+        SET    snt.status       = 'done',
+               snt.processed_at = NOW()
+        WHERE  snt.status = 'processing'
+        AND    sr.status  = 'done'
+    """)
+    # Reset failed ones back to pending for retry
+    cur.execute("""
+        UPDATE sku_needs_transformation
+        SET    status = 'pending'
+        WHERE  status = 'processing'
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def get_transformation_run_stats() -> dict:
+    """Return overall counts by status for the dashboard summary card."""
+    conn = _conn()
+    cur  = conn.cursor(dictionary=True)
+    cur.execute("""
+        SELECT status, COUNT(*) AS cnt
+        FROM   sku_needs_transformation
+        GROUP  BY status
+    """)
+    rows   = cur.fetchall()
+    cur.close()
+    conn.close()
+    return {r["status"]: r["cnt"] for r in rows}

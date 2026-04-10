@@ -51,6 +51,13 @@ from requests.adapters import HTTPAdapter
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
+# Add project root to sys.path so modules.db is importable
+import sys
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+from modules import db as pipeline_db
+
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level   = logging.INFO,
@@ -248,47 +255,98 @@ def write_broken_row(product_code: str, container: str, l2_category: str) -> Non
 # ── HEAD Checker ───────────────────────────────────────────────────────────────
 def check_sku(product: dict, session: requests.Session) -> dict:
     """
-    Check all gallery images for a SKU sequentially.
-    Stops at the first broken image and marks the SKU as broken.
+    Two-phase gallery image check:
 
-    Returns:
-      {"productCode": "...", "ok": bool, "error": "", "container": "...", "l2_category": "..."}
+    Phase 1 — First image:
+      If broken → SKU has never been processed into lifestyle-new/.
+      Result type: 'needs_transformation'
+      → written to sku_needs_transformation table + CSV
+
+    Phase 2 — Remaining images (only if first is OK):
+      Each broken image = that specific source image never existed.
+      Result type: 'partial_broken' (can have multiple broken images)
+      → written to broken_image_health table
+
+    If all OK → type: 'ok'
     """
     product_code = product["productCode"]
     gallery_urls = product["gallery_urls"]
     l2_category  = product["l2_category"]
 
     if not gallery_urls:
-        return {"productCode": product_code, "ok": False, "error": "no_url",
+        return {"productCode": product_code, "type": "no_url",
                 "container": "", "l2_category": l2_category}
 
-    # container derived from first URL domain (unchanged by --use-new)
+    # container is always derived from first URL domain (stable, unaffected by --use-new)
     container = url_to_container(gallery_urls[0])
 
-    for url in gallery_urls:
+    # ── Phase 1: Check first image ─────────────────────────────────────────────
+    first_url = gallery_urls[0]
+    try:
+        resp = session.head(first_url, timeout=HEAD_TIMEOUT, allow_redirects=True)
+        if resp.status_code != 200:
+            log.warning(f"[{resp.status_code}] {product_code} ({l2_category}) → {first_url}")
+            return {
+                "productCode": product_code,
+                "type":        "needs_transformation",
+                "container":   container,
+                "l2_category": l2_category,
+                "broken_url":  first_url,
+                "error":       str(resp.status_code),
+            }
+    except requests.exceptions.Timeout:
+        log.warning(f"[TIMEOUT] {product_code} ({l2_category}) → {first_url}")
+        return {
+            "productCode": product_code,
+            "type":        "needs_transformation",
+            "container":   container,
+            "l2_category": l2_category,
+            "broken_url":  first_url,
+            "error":       "timeout",
+        }
+    except Exception as exc:
+        log.warning(f"[ERROR] {product_code} ({l2_category}) → {exc}")
+        return {
+            "productCode": product_code,
+            "type":        "needs_transformation",
+            "container":   container,
+            "l2_category": l2_category,
+            "broken_url":  first_url,
+            "error":       str(exc),
+        }
+
+    # ── Phase 2: Check remaining images (first was OK) ────────────────────────
+    broken_images: list[dict] = []
+    for idx, url in enumerate(gallery_urls[1:], start=2):
         if not url:
             continue
         try:
             resp = session.head(url, timeout=HEAD_TIMEOUT, allow_redirects=True)
             if resp.status_code != 200:
-                log.warning(f"[{resp.status_code}] {product_code} ({l2_category}) → {url}")
-                return {"productCode": product_code, "ok": False, "error": str(resp.status_code),
-                        "container": container, "l2_category": l2_category}
+                log.warning(f"[{resp.status_code}] img#{idx} {product_code} ({l2_category}) → {url}")
+                broken_images.append({"position": idx, "url": url, "error": str(resp.status_code)})
         except requests.exceptions.Timeout:
-            log.warning(f"[TIMEOUT] {product_code} ({l2_category}) → {url}")
-            return {"productCode": product_code, "ok": False, "error": "timeout",
-                    "container": container, "l2_category": l2_category}
-        except requests.exceptions.ConnectionError as exc:
-            log.warning(f"[CONN_ERR] {product_code} ({l2_category}) → {url}")
-            return {"productCode": product_code, "ok": False, "error": f"conn_error: {exc}",
-                    "container": container, "l2_category": l2_category}
+            log.warning(f"[TIMEOUT] img#{idx} {product_code} ({l2_category}) → {url}")
+            broken_images.append({"position": idx, "url": url, "error": "timeout"})
         except Exception as exc:
-            log.warning(f"[ERROR] {product_code} ({l2_category}) → {exc}")
-            return {"productCode": product_code, "ok": False, "error": str(exc),
-                    "container": container, "l2_category": l2_category}
+            log.warning(f"[ERROR] img#{idx} {product_code} ({l2_category}) → {exc}")
+            broken_images.append({"position": idx, "url": url, "error": str(exc)})
 
-    return {"productCode": product_code, "ok": True, "error": "",
-            "container": container, "l2_category": l2_category}
+    if broken_images:
+        return {
+            "productCode":  product_code,
+            "type":         "partial_broken",
+            "container":    container,
+            "l2_category":  l2_category,
+            "broken_images": broken_images,
+        }
+
+    return {
+        "productCode": product_code,
+        "type":        "ok",
+        "container":   container,
+        "l2_category": l2_category,
+    }
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -403,15 +461,51 @@ def main() -> None:
 
             checked_codes.append(result["productCode"])
 
-            if result.get("error") == "no_url":
+            result_type = result.get("type", "ok")
+            cat = result.get("l2_category", "unknown")
+
+            if result_type == "no_url":
                 counters["no_url"] += 1
-            elif result["ok"]:
+
+            elif result_type == "ok":
                 counters["ok"] += 1
-            else:
-                counters["broken"] += 1
-                cat = result.get("l2_category", "unknown")
+
+            elif result_type == "needs_transformation":
+                # First image broken → full SKU transformation needed
+                counters["needs_transformation"] = counters.get("needs_transformation", 0) + 1
                 category_broken[cat] += 1
-                write_broken_row(result["productCode"], result.get("container", ""), cat)
+                container = result.get("container", "")
+                broken_url = result.get("broken_url", "")
+                # Write CSV (backward compat)
+                write_broken_row(result["productCode"], container, cat)
+                # Write to DB
+                pipeline_db.upsert_needs_transformation([{
+                    "sku_id":     result["productCode"],
+                    "category":   cat,
+                    "container":  container,
+                    "broken_url": broken_url,
+                }])
+
+            elif result_type == "partial_broken":
+                # Non-first images broken → source images missing, inform business
+                broken_images = result.get("broken_images", [])
+                counters["partial_broken"] = counters.get("partial_broken", 0) + 1
+                category_broken[cat] += len(broken_images)
+                container = result.get("container", "")
+                # Write each broken image to DB
+                db_rows = [
+                    {
+                        "sku_id":         result["productCode"],
+                        "category":       cat,
+                        "broken_url":     bi["url"],
+                        "image_position": bi["position"],
+                    }
+                    for bi in broken_images
+                ]
+                pipeline_db.upsert_broken_images(db_rows)
+                # Write to CSV for reference
+                for bi in broken_images:
+                    write_broken_row(result["productCode"], container, f"{cat}_partial")
 
             # Checkpoint every 500 completions
             if len(checked_codes) % 500 == 0:
@@ -429,7 +523,8 @@ def main() -> None:
     head_session.close()
 
     # ── Step 4: Summary ────────────────────────────────────────────────────────
-    total_checked = counters["ok"] + counters["broken"] + counters["no_url"]
+    total_checked = counters["ok"] + counters.get("needs_transformation", 0) + counters.get("partial_broken", 0) + counters["no_url"]
+    total_broken  = counters.get("needs_transformation", 0) + counters.get("partial_broken", 0)
     pass_rate     = (counters["ok"] / total_checked * 100) if total_checked else 0
 
     summary_lines = [
@@ -439,7 +534,8 @@ def main() -> None:
         f"  Total products    : {len(all_products)}",
         f"  Checked this run  : {total_checked}",
         f"  OK (200)          : {counters['ok']}",
-        f"  Broken            : {counters['broken']}",
+        f"  Needs Transform   : {counters.get('needs_transformation', 0)}",
+        f"  Partial Broken    : {counters.get('partial_broken', 0)}",
         f"  No URL            : {counters['no_url']}",
         f"  Pass rate         : {pass_rate:.2f}%",
         "=" * 55,

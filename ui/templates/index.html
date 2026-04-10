@@ -352,6 +352,8 @@
     </button>
     <button class="tab-btn" onclick="switchTab('skudetail', this)">🔍 SKU Detail</button>
     <button class="tab-btn" onclick="switchTab('qcreport', this); loadQcReport()">📊 QC Report</button>
+    <button class="tab-btn" onclick="switchTab('brokenimages', this); loadBrokenImages()">🚨 Broken Images</button>
+    <button class="tab-btn" onclick="switchTab('processmissing', this); loadProcessMissing()">🔄 Process Missing</button>
   </div>
 
   <!-- ══ TAB: RUNS ════════════════════════════════════════════ -->
@@ -832,6 +834,170 @@ FAILED_SKU_ID,,true</pre>
     </div>
 
   </div><!-- /tab-qcreport -->
+
+  <!-- ══ TAB: BROKEN IMAGES ══════════════════════════════════ -->
+  <div id="tab-brokenimages" class="tab-panel">
+
+    <!-- Header row -->
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="font-size:1.05rem; font-weight:700; color:#1e293b; margin:0;">🚨 Broken Image Health</h2>
+        <p style="font-size:.8rem; color:#94a3b8; margin:4px 0 0;">SKUs with broken gallery images detected by <code>check-image-health.py</code></p>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+        <!-- Search -->
+        <input id="bi-search" type="text" placeholder="Search SKU ID…"
+               oninput="debounceBrokenSearch()"
+               style="border:1px solid #e2e8f0; border-radius:8px; padding:7px 12px; font-size:.82rem; outline:none; width:200px;"
+               onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#e2e8f0'"/>
+        <!-- Category filter -->
+        <select id="bi-category" onchange="loadBrokenImages()"
+                style="border:1px solid #e2e8f0; border-radius:8px; padding:7px 12px; font-size:.82rem; outline:none; background:#fff; cursor:pointer;">
+          <option value="">All Categories</option>
+        </select>
+        <button onclick="loadBrokenImages(true)"
+                style="font-size:.78rem; padding:6px 14px; border-radius:8px; border:1px solid #e2e8f0;
+                       background:#fff; color:#4f46e5; cursor:pointer; font-weight:600;">
+          🔄 Refresh
+        </button>
+      </div>
+    </div>
+
+    <!-- Summary bar -->
+    <div id="bi-summary" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px;"></div>
+
+    <!-- Table -->
+    <div class="card" style="padding:0; overflow:hidden;">
+      <div class="overflow-x-auto">
+        <table class="tbl" id="bi-table">
+          <thead>
+            <tr>
+              <th style="width:36px;">#</th>
+              <th>SKU ID</th>
+              <th>Category</th>
+              <th>Broken Image URL</th>
+              <th style="width:140px; text-align:center;">Production Page</th>
+            </tr>
+          </thead>
+          <tbody id="bi-tbody">
+            <tr><td colspan="5" style="text-align:center; padding:48px; color:#94a3b8;">
+              <div style="font-size:2rem; margin-bottom:8px;">🔍</div>
+              Loading broken images…
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <div id="bi-pagination" style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; font-size:.82rem; color:#6b7280; flex-wrap:wrap; gap:8px;"></div>
+
+  </div><!-- /tab-brokenimages -->
+
+  <!-- ══ TAB: PROCESS MISSING ════════════════════════════════ -->
+  <div id="tab-processmissing" class="tab-panel">
+
+    <!-- Header -->
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:24px; flex-wrap:wrap; gap:16px;">
+      <div>
+        <h2 style="font-size:1.05rem; font-weight:700; color:#1e293b; margin:0;">🔄 Process Missing SKUs</h2>
+        <p style="font-size:.8rem; color:#94a3b8; margin:4px 0 0;">SKUs where the first image is missing in <code>lifestyle-new/</code> — needs full transformation</p>
+      </div>
+      <button onclick="loadProcessMissing(true)"
+              style="font-size:.78rem; padding:6px 14px; border-radius:8px; border:1px solid #e2e8f0;
+                     background:#fff; color:#4f46e5; cursor:pointer; font-weight:600;">
+        🔄 Refresh
+      </button>
+    </div>
+
+    <!-- Summary stats -->
+    <div id="pm-stats" style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:24px;"></div>
+
+    <!-- Category pills -->
+    <div style="margin-bottom:20px;">
+      <div style="font-size:.8rem; font-weight:600; color:#374151; margin-bottom:10px;">Select Category</div>
+      <div id="pm-category-pills" style="display:flex; flex-wrap:wrap; gap:8px;">
+        <div style="color:#94a3b8; font-size:.82rem;">Loading categories…</div>
+      </div>
+    </div>
+
+    <!-- Options row -->
+    <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:24px; align-items:flex-end;">
+      <!-- Pad mode -->
+      <div>
+        <div style="font-size:.8rem; font-weight:600; color:#374151; margin-bottom:8px;">Pad Mode</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="pm-pad-mode">
+          <button class="pm-pad-btn active" data-mode="auto"
+                  onclick="setPadMode(this)"
+                  style="padding:7px 16px; border-radius:8px; border:2px solid #6366f1;
+                         background:#6366f1; color:#fff; font-size:.8rem; font-weight:600; cursor:pointer;">
+            auto
+          </button>
+          <button class="pm-pad-btn" data-mode="white"
+                  onclick="setPadMode(this)"
+                  style="padding:7px 16px; border-radius:8px; border:2px solid #e2e8f0;
+                         background:#fff; color:#374151; font-size:.8rem; font-weight:600; cursor:pointer;">
+            white
+          </button>
+          <button class="pm-pad-btn" data-mode="gen_fill"
+                  onclick="setPadMode(this)"
+                  style="padding:7px 16px; border-radius:8px; border:2px solid #e2e8f0;
+                         background:#fff; color:#374151; font-size:.8rem; font-weight:600; cursor:pointer;">
+            gen_fill
+          </button>
+          <button class="pm-pad-btn" data-mode="no"
+                  onclick="setPadMode(this)"
+                  style="padding:7px 16px; border-radius:8px; border:2px solid #e2e8f0;
+                         background:#fff; color:#374151; font-size:.8rem; font-weight:600; cursor:pointer;">
+            no
+          </button>
+        </div>
+      </div>
+      <!-- Workers -->
+      <div>
+        <div style="font-size:.8rem; font-weight:600; color:#374151; margin-bottom:8px;">Workers</div>
+        <input id="pm-workers" type="number" min="1" max="50" value="10"
+               style="width:80px; border:1px solid #e2e8f0; border-radius:8px; padding:7px 10px;
+                      font-size:.88rem; outline:none;"
+               onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#e2e8f0'"/>
+      </div>
+      <!-- Start button -->
+      <div>
+        <button id="pm-start-btn" onclick="startProcessMissing()"
+                style="padding:9px 28px; border-radius:10px; background:#6366f1; color:#fff;
+                       border:none; font-size:.88rem; font-weight:700; cursor:pointer;
+                       transition:background .15s; opacity:.5; pointer-events:none;"
+                disabled>
+          ▶ Start Processing
+        </button>
+      </div>
+    </div>
+
+    <!-- Progress panel (hidden until job starts) -->
+    <div id="pm-progress-panel" style="display:none;">
+      <div class="card" style="padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <span style="font-weight:700; color:#1e293b;" id="pm-prog-label">Processing…</span>
+            <span id="pm-prog-run-id" style="font-size:.72rem; color:#94a3b8; margin-left:8px; font-family:monospace;"></span>
+          </div>
+          <div id="pm-prog-badges" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+        </div>
+        <!-- Progress bar -->
+        <div style="background:#f1f5f9; border-radius:9999px; height:10px; overflow:hidden; margin-bottom:10px;">
+          <div id="pm-prog-bar" style="background:#6366f1; height:100%; border-radius:9999px; transition:width .5s; width:0%;"></div>
+        </div>
+        <div style="font-size:.78rem; color:#94a3b8;" id="pm-prog-text">0 / 0</div>
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <div id="pm-empty" style="display:none; text-align:center; padding:60px 0; color:#94a3b8;">
+      <div style="font-size:2.5rem; margin-bottom:12px;">✅</div>
+      <div style="font-size:.9rem;">No pending SKUs — all missing images have been processed!</div>
+    </div>
+
+  </div><!-- /tab-processmissing -->
 
 </div><!-- /dev-view -->
 
@@ -2535,6 +2701,328 @@ function undoQc(idx, skuId) {
     })
     .catch(() => alert('Network error'));
 }
+
+
+/* ═══════════════════════════════════════════════════════════
+   PROCESS MISSING TAB
+   ═══════════════════════════════════════════════════════════ */
+
+let _pmLoaded       = false;
+let _pmCategory     = null;   // currently selected category
+let _pmPadMode      = 'auto';
+let _pmPollTimer    = null;
+let _pmCurrentRunId = null;
+
+function loadProcessMissing(force) {
+  if (_pmLoaded && !force) return;
+  _pmLoaded = true;
+
+  fetch('/api/process-missing/categories')
+    .then(r => r.json())
+    .then(data => {
+      const cats  = data.categories || [];
+      const stats = data.stats || {};
+      const total = (stats.pending || 0) + (stats.processing || 0) + (stats.done || 0);
+
+      // Summary stats
+      document.getElementById('pm-stats').innerHTML = `
+        <div style="background:#fef3c7; border-radius:10px; padding:10px 18px; min-width:110px; text-align:center;">
+          <div style="font-size:1.5rem; font-weight:700; color:#92400e;">${stats.pending || 0}</div>
+          <div style="font-size:.72rem; color:#78350f; font-weight:600;">Pending</div>
+        </div>
+        <div style="background:#dcfce7; border-radius:10px; padding:10px 18px; min-width:110px; text-align:center;">
+          <div style="font-size:1.5rem; font-weight:700; color:#166534;">${stats.done || 0}</div>
+          <div style="font-size:.72rem; color:#14532d; font-weight:600;">Done</div>
+        </div>
+        <div style="background:#f1f5f9; border-radius:10px; padding:10px 18px; min-width:110px; text-align:center;">
+          <div style="font-size:1.5rem; font-weight:700; color:#475569;">${total}</div>
+          <div style="font-size:.72rem; color:#64748b; font-weight:600;">Total</div>
+        </div>`;
+
+      // Category pills
+      const pillsDiv = document.getElementById('pm-category-pills');
+      if (!cats.length) {
+        document.getElementById('pm-empty').style.display = 'block';
+        pillsDiv.innerHTML = '<div style="color:#94a3b8; font-size:.82rem;">No pending categories</div>';
+        return;
+      }
+
+      // "All" pill + per-category pills
+      let html = `<button class="pm-cat-pill" data-cat=""
+        onclick="selectPmCategory(this, '')"
+        style="padding:7px 16px; border-radius:9999px; border:2px solid #e2e8f0;
+               background:#fff; color:#64748b; font-size:.8rem; font-weight:600; cursor:pointer;">
+        All (${cats.reduce((s,c)=>s+c.cnt, 0)})
+      </button>`;
+
+      cats.forEach(c => {
+        html += `<button class="pm-cat-pill" data-cat="${c.category}"
+          onclick="selectPmCategory(this, '${c.category}')"
+          style="padding:7px 16px; border-radius:9999px; border:2px solid #e2e8f0;
+                 background:#fff; color:#64748b; font-size:.8rem; font-weight:600; cursor:pointer;">
+          ${c.category} <span style="background:#fef3c7;color:#92400e;border-radius:9999px;
+                                     padding:1px 7px;margin-left:4px;font-size:.7rem;">${c.cnt}</span>
+        </button>`;
+      });
+      pillsDiv.innerHTML = html;
+    })
+    .catch(err => console.error('pm categories error:', err));
+}
+
+function selectPmCategory(el, cat) {
+  _pmCategory = cat || null;
+  // Update pill styles
+  document.querySelectorAll('.pm-cat-pill').forEach(b => {
+    const isActive = b.dataset.cat === (cat || '');
+    b.style.borderColor = isActive ? '#6366f1' : '#e2e8f0';
+    b.style.background  = isActive ? '#eef2ff' : '#fff';
+    b.style.color       = isActive ? '#4f46e5' : '#64748b';
+  });
+  // Enable start button
+  const btn = document.getElementById('pm-start-btn');
+  btn.disabled = false;
+  btn.style.opacity = '1';
+  btn.style.pointerEvents = 'auto';
+}
+
+function setPadMode(el) {
+  _pmPadMode = el.dataset.mode;
+  document.querySelectorAll('.pm-pad-btn').forEach(b => {
+    const active = b.dataset.mode === _pmPadMode;
+    b.style.background  = active ? '#6366f1' : '#fff';
+    b.style.color       = active ? '#fff' : '#374151';
+    b.style.borderColor = active ? '#6366f1' : '#e2e8f0';
+  });
+}
+
+function startProcessMissing() {
+  const btn     = document.getElementById('pm-start-btn');
+  const workers = parseInt(document.getElementById('pm-workers').value) || 10;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Starting…';
+
+  fetch('/api/process-missing/start', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({
+      category: _pmCategory,
+      pad_mode: _pmPadMode,
+      workers:  workers,
+    }),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      alert('Error: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = '▶ Start Processing';
+      return;
+    }
+    _pmCurrentRunId = data.run_id;
+
+    // Show progress panel
+    document.getElementById('pm-progress-panel').style.display = 'block';
+    document.getElementById('pm-prog-run-id').textContent = data.run_id.slice(0, 8);
+    document.getElementById('pm-prog-label').textContent =
+      `Processing ${data.total} SKUs (${_pmCategory || 'all categories'}) — pad: ${data.pad_mode}`;
+
+    btn.textContent = '⏳ Running…';
+    _pmPollTimer = setInterval(() => _pollPmProgress(data.run_id), 3000);
+  })
+  .catch(err => {
+    alert('Network error: ' + err);
+    btn.disabled = false;
+    btn.textContent = '▶ Start Processing';
+  });
+}
+
+function _pollPmProgress(runId) {
+  fetch(`/api/process-missing/status/${runId}`)
+    .then(r => r.json())
+    .then(d => {
+      const finished = d.done + d.failed + d.skipped;
+      const total    = d.total || 1;
+      const pct      = Math.round(finished / total * 100);
+
+      document.getElementById('pm-prog-bar').style.width = pct + '%';
+      document.getElementById('pm-prog-text').textContent = `${finished} / ${total} (${pct}%)`;
+      document.getElementById('pm-prog-badges').innerHTML = `
+        <span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">✅ ${d.done} done</span>
+        <span style="background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">❌ ${d.failed} failed</span>
+        <span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">⏭ ${d.skipped} skipped</span>
+        <span style="background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">🔄 ${d.running} running</span>`;
+
+      if (d.is_complete) {
+        clearInterval(_pmPollTimer);
+        _pmPollTimer = null;
+        document.getElementById('pm-prog-bar').style.background = '#10b981';
+        document.getElementById('pm-prog-label').textContent = '✅ Processing Complete!';
+        document.getElementById('pm-start-btn').textContent = '▶ Start Processing';
+        document.getElementById('pm-start-btn').disabled = false;
+        document.getElementById('pm-start-btn').style.opacity = '1';
+        // Refresh categories to show updated counts
+        setTimeout(() => loadProcessMissing(true), 1000);
+      }
+    })
+    .catch(err => console.error('poll error:', err));
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   BROKEN IMAGES TAB
+   ═══════════════════════════════════════════════════════════ */
+
+let _biLoaded       = false;
+let _biCurrentPage  = 0;
+const BI_PAGE_SIZE  = 200;
+let _biTotal        = 0;
+let _biSearchTimer  = null;
+
+function debounceBrokenSearch() {
+  clearTimeout(_biSearchTimer);
+  _biSearchTimer = setTimeout(() => { _biCurrentPage = 0; loadBrokenImages(); }, 350);
+}
+
+function loadBrokenImages(force) {
+  if (_biLoaded && !force) return;  // already loaded — skip on tab revisit unless forced
+  _biLoaded = true;
+
+  // Load categories into select (once)
+  const sel = document.getElementById('bi-category');
+  if (sel && sel.options.length === 1) {
+    fetch('/api/broken-images/categories')
+      .then(r => r.json())
+      .then(cats => {
+        cats.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.category || '';
+          opt.textContent = `${c.category || 'Unknown'} (${c.cnt})`;
+          sel.appendChild(opt);
+        });
+      });
+  }
+
+  _fetchBrokenImages();
+}
+
+function _fetchBrokenImages() {
+  const tbody    = document.getElementById('bi-tbody');
+  const summary  = document.getElementById('bi-summary');
+  const pagDiv   = document.getElementById('bi-pagination');
+  const category = document.getElementById('bi-category')?.value || '';
+  const search   = document.getElementById('bi-search')?.value  || '';
+
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:40px;color:#94a3b8;">
+    <span style="font-size:1.5rem;">⏳</span> Loading…</td></tr>`;
+
+  const params = new URLSearchParams({
+    limit:  BI_PAGE_SIZE,
+    offset: _biCurrentPage * BI_PAGE_SIZE,
+  });
+  if (category) params.set('category', category);
+  if (search)   params.set('search',   search);
+
+  fetch(`/api/broken-images?${params}`)
+    .then(r => r.json())
+    .then(data => {
+      _biTotal = data.total;
+      const rows = data.rows;
+
+      // Summary bar
+      summary.innerHTML = `
+        <div style="background:#fee2e2; border-radius:10px; padding:10px 18px; display:flex; flex-direction:column; align-items:center; min-width:110px;">
+          <div style="font-size:1.5rem; font-weight:700; color:#b91c1c;">${data.total}</div>
+          <div style="font-size:.72rem; color:#7f1d1d; font-weight:600;">Total Broken</div>
+        </div>
+        <div style="background:#fff7ed; border-radius:10px; padding:10px 18px; display:flex; flex-direction:column; align-items:center; min-width:110px;">
+          <div style="font-size:1.5rem; font-weight:700; color:#c2410c;">${rows.length}</div>
+          <div style="font-size:.72rem; color:#7c2d12; font-weight:600;">Showing</div>
+        </div>`;
+
+      // Table rows
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:48px;color:#94a3b8;">
+          <div style="font-size:2rem;margin-bottom:8px;">✅</div>No broken images found.</td></tr>`;
+        pagDiv.innerHTML = '';
+        return;
+      }
+
+      tbody.innerHTML = rows.map((r, i) => {
+        const idx        = _biCurrentPage * BI_PAGE_SIZE + i + 1;
+        const prodUrl    = `https://www.lifestylestores.com/in/en/p/${encodeURIComponent(r.sku_id)}`;
+        const shortUrl   = r.broken_url.length > 70 ? r.broken_url.slice(0, 67) + '…' : r.broken_url;
+        const catBadge   = r.category
+          ? `<span style="background:#fef3c7;color:#92400e;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:9999px;">${r.category}</span>`
+          : '—';
+        return `<tr>
+          <td style="color:#94a3b8; font-size:.78rem;">${idx}</td>
+          <td>
+            <span class="mono" style="font-size:.82rem; font-weight:600; color:#1e293b;">${r.sku_id}</span>
+          </td>
+          <td>${catBadge}</td>
+          <td>
+            <a href="${r.broken_url}" target="_blank" rel="noopener"
+               title="${r.broken_url}"
+               style="color:#ef4444; font-size:.78rem; text-decoration:none; font-family:ui-monospace,monospace;"
+               onmouseover="this.style.textDecoration='underline'"
+               onmouseout="this.style.textDecoration='none'">
+              ${shortUrl}
+            </a>
+          </td>
+          <td style="text-align:center;">
+            <a href="${prodUrl}" target="_blank" rel="noopener"
+               style="display:inline-flex; align-items:center; gap:5px; background:#f0fdf4; color:#16a34a;
+                      border:1px solid #86efac; border-radius:7px; padding:5px 12px;
+                      font-size:.75rem; font-weight:600; text-decoration:none; transition:all .15s;"
+               onmouseover="this.style.background='#dcfce7'"
+               onmouseout="this.style.background='#f0fdf4'">
+              🛍️ Open
+            </a>
+          </td>
+        </tr>`;
+      }).join('');
+
+      // Pagination
+      const totalPages = Math.ceil(_biTotal / BI_PAGE_SIZE);
+      if (totalPages <= 1) {
+        pagDiv.innerHTML = `<span style="color:#94a3b8; font-size:.8rem;">Showing all ${_biTotal} results</span>`;
+      } else {
+        const start = _biCurrentPage * BI_PAGE_SIZE + 1;
+        const end   = Math.min((_biCurrentPage + 1) * BI_PAGE_SIZE, _biTotal);
+        pagDiv.innerHTML = `
+          <span>Showing <strong>${start}–${end}</strong> of <strong>${_biTotal}</strong> broken images</span>
+          <div style="display:flex; gap:6px;">
+            <button onclick="_biPage(-1)" ${_biCurrentPage === 0 ? 'disabled' : ''}
+                    style="padding:5px 14px; border-radius:7px; border:1px solid #e2e8f0;
+                           background:#fff; font-size:.78rem; cursor:pointer; font-weight:600;
+                           ${_biCurrentPage === 0 ? 'opacity:.4; cursor:default;' : ''}">
+              ← Prev
+            </button>
+            <span style="padding:5px 10px; font-size:.78rem; color:#64748b;">
+              Page ${_biCurrentPage + 1} / ${totalPages}
+            </span>
+            <button onclick="_biPage(1)" ${_biCurrentPage >= totalPages - 1 ? 'disabled' : ''}
+                    style="padding:5px 14px; border-radius:7px; border:1px solid #e2e8f0;
+                           background:#fff; font-size:.78rem; cursor:pointer; font-weight:600;
+                           ${_biCurrentPage >= totalPages - 1 ? 'opacity:.4; cursor:default;' : ''}">
+              Next →
+            </button>
+          </div>`;
+      }
+    })
+    .catch(err => {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:40px;color:#ef4444;">
+        ❌ Failed to load: ${err}</td></tr>`;
+    });
+}
+
+function _biPage(delta) {
+  const totalPages = Math.ceil(_biTotal / BI_PAGE_SIZE);
+  _biCurrentPage = Math.max(0, Math.min(_biCurrentPage + delta, totalPages - 1));
+  _fetchBrokenImages();
+}
+
 </script>
 
 <!-- ════ QC Confirm Modal ════ -->

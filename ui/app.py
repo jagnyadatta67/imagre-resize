@@ -47,8 +47,14 @@ if BASE_DIR not in sys.path:
 
 from modules.azure_client import AzureClient                     # noqa: E402
 from modules.converter import reprocess_single_image             # noqa: E402
+from modules import db as pipeline_db                            # noqa: E402
+from modules.pipeline_runner import run_pipeline as _run_pipeline  # noqa: E402
 
 _azure = AzureClient()   # singleton — thread-safe per Azure SDK docs
+
+# Active web-triggered pipeline runs: run_id → {category, pad_mode, started_at}
+_active_pipeline_runs: dict = {}
+_active_pipeline_lock = threading.Lock()
 
 MYSQL_HOST     = os.getenv("MYSQL_HOST", "localhost")
 MYSQL_PORT     = int(os.getenv("MYSQL_PORT", "3306"))
@@ -138,6 +144,17 @@ def _ensure_ui_schema() -> None:
                 password_hash VARCHAR(255) NOT NULL,
                 is_active     TINYINT(1)   NOT NULL DEFAULT 1,
                 created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS broken_image_health (
+                id           INT AUTO_INCREMENT PRIMARY KEY,
+                sku_id       VARCHAR(300) NOT NULL,
+                category     VARCHAR(100),
+                broken_url   TEXT         NOT NULL,
+                checked_at   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_bih_sku      (sku_id),
+                INDEX idx_bih_category (category)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         """)
         cur.execute("""
@@ -630,6 +647,195 @@ def index():
         show_upload_all  = show_upload_all,
         upload_users     = [],            # kept for template compat — dropdown removed
     )
+
+
+@app.route("/api/process-missing/categories")
+def api_process_missing_categories():
+    """Return pending transformation categories with SKU counts."""
+    try:
+        cats = pipeline_db.get_pending_transformation_categories()
+        stats = pipeline_db.get_transformation_run_stats()
+        return jsonify({"categories": cats, "stats": stats})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/process-missing/start", methods=["POST"])
+def api_process_missing_start():
+    """
+    Trigger pipeline for pending SKUs in a category.
+    Body JSON: {category, pad_mode, workers}
+    Returns: {run_id, total}
+    """
+    if not _current_user():
+        return jsonify({"error": "Login required"}), 401
+
+    data     = request.get_json() or {}
+    category = data.get("category", "").strip() or None
+    pad_mode = data.get("pad_mode", "auto")
+    workers  = max(1, min(int(data.get("workers", 10)), 50))
+
+    if pad_mode not in ("auto", "white", "gen_fill", "no"):
+        pad_mode = "auto"
+
+    # Get pending SKUs
+    sku_rows = pipeline_db.get_pending_transformation_skus(category)
+    if not sku_rows:
+        return jsonify({"error": "No pending SKUs for this selection"}), 400
+
+    # Build sku_list for pipeline_runner
+    sku_list = [
+        {"sku_id": r["sku_id"], "container": r["container"],
+         "category": r["category"], "reprocess": False}
+        for r in sku_rows
+    ]
+
+    import uuid as _uuid
+    run_id = str(_uuid.uuid4())
+
+    # Mark as processing so they don't show as pending while running
+    pipeline_db.mark_transformations_processing([r["sku_id"] for r in sku_rows])
+
+    # Track in active runs
+    with _active_pipeline_lock:
+        _active_pipeline_runs[run_id] = {
+            "category":   category or "all",
+            "pad_mode":   pad_mode,
+            "workers":    workers,
+            "total":      len(sku_list),
+            "started_at": datetime.now().isoformat(),
+            "status":     "running",
+        }
+
+    def _bg_run():
+        try:
+            _run_pipeline(
+                sku_list = sku_list,
+                run_id   = run_id,
+                pad_mode = pad_mode,
+                workers  = workers,
+                source   = f"web/{category or 'all'}",
+            )
+            # Mark done/reset failed back to pending
+            pipeline_db.mark_transformations_done_by_run(run_id)
+        except Exception as exc:
+            import logging as _lg
+            _lg.getLogger("web.pipeline").error(f"Background pipeline error: {exc}")
+            # Reset processing → pending on error
+            pipeline_db.mark_transformations_done_by_run(run_id)
+        finally:
+            with _active_pipeline_lock:
+                if run_id in _active_pipeline_runs:
+                    _active_pipeline_runs[run_id]["status"] = "done"
+
+    import threading as _threading
+    t = _threading.Thread(target=_bg_run, name=f"pipeline-{run_id[:8]}", daemon=True)
+    t.start()
+
+    return jsonify({"run_id": run_id, "total": len(sku_list), "pad_mode": pad_mode})
+
+
+@app.route("/api/process-missing/status/<run_id>")
+def api_process_missing_status(run_id: str):
+    """Poll pipeline run progress. Returns queue stats + is_complete flag."""
+    db_conn = get_db()
+    cur     = db_conn.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT status, COUNT(*) AS cnt
+            FROM   sku_queue
+            WHERE  run_id = %s
+            GROUP  BY status
+        """, (run_id,))
+        queue_rows = cur.fetchall()
+
+        cur.execute(
+            "SELECT status, done_count, failed_count, skipped_count, total_skus FROM sku_runs WHERE run_id = %s",
+            (run_id,)
+        )
+        run_row = cur.fetchone()
+    finally:
+        cur.close()
+        db_conn.close()
+
+    stats = {r["status"]: r["cnt"] for r in queue_rows}
+    is_complete = run_row and run_row["status"] in ("done", "done_with_errors") if run_row else False
+
+    with _active_pipeline_lock:
+        meta = _active_pipeline_runs.get(run_id, {})
+
+    return jsonify({
+        "run_id":     run_id,
+        "pending":    stats.get("pending",  0),
+        "running":    stats.get("running",  0),
+        "done":       stats.get("done",     0),
+        "failed":     stats.get("failed",   0),
+        "skipped":    stats.get("skipped",  0),
+        "total":      run_row["total_skus"] if run_row else 0,
+        "is_complete": bool(is_complete),
+        "meta":        meta,
+    })
+
+
+@app.route("/api/broken-images")
+def api_broken_images():
+    """
+    AJAX endpoint — returns paginated broken image health rows as JSON.
+    Query params: category, search, limit, offset
+    """
+    category = request.args.get("category", "").strip() or None
+    search   = request.args.get("search",   "").strip() or None
+    limit    = min(int(request.args.get("limit",  "200")), 1000)
+    offset   = int(request.args.get("offset", "0"))
+
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        where, params = [], []
+        if category:
+            where.append("category = %s"); params.append(category)
+        if search:
+            where.append("sku_id LIKE %s"); params.append(f"%{search}%")
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+        cur.execute(f"SELECT COUNT(*) AS cnt FROM broken_image_health {where_sql}", params)
+        total = cur.fetchone()["cnt"]
+
+        cur.execute(
+            f"SELECT sku_id, category, broken_url, checked_at "
+            f"FROM   broken_image_health {where_sql} "
+            f"ORDER  BY category, sku_id "
+            f"LIMIT %s OFFSET %s",
+            params + [limit, offset]
+        )
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+
+    for r in rows:
+        if r.get("checked_at"):
+            r["checked_at"] = r["checked_at"].strftime("%Y-%m-%d %H:%M:%S")
+    return jsonify({"total": total, "rows": rows})
+
+
+@app.route("/api/broken-images/categories")
+def api_broken_image_categories():
+    """Return distinct categories + counts for the broken images filter bar."""
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT category, COUNT(*) AS cnt
+            FROM   broken_image_health
+            GROUP  BY category
+            ORDER  BY cnt DESC
+        """)
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        db.close()
+    return jsonify(rows)
 
 
 @app.route("/api/run/<run_id>/skus")
