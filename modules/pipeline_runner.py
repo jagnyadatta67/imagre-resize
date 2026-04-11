@@ -77,9 +77,10 @@ def process_sku(
     """
     sku_id    = sku_entry["sku_id"]
     container = sku_entry.get("container")
-    reprocess = sku_entry.get("reprocess", False)
-    category  = sku_entry.get("category")
-    sku_log   = logging.getLogger(f"sku.{sku_id}")
+    reprocess    = sku_entry.get("reprocess", False)
+    category     = sku_entry.get("category")
+    source_blobs = sku_entry.get("source_blobs")  # exact blob paths from Unbxd (optional)
+    sku_log      = logging.getLogger(f"sku.{sku_id}")
 
     # Skip if already done and not forced reprocess
     existing = db.get_sku_status(sku_id)
@@ -98,28 +99,35 @@ def process_sku(
 
     sku_log.info(f"=== START  {sku_id}  container={container_name} ===")
 
-    try:
-        blobs = azure.list_sku_blobs(container_name, sku_id)
-    except Exception as exc:
-        sku_log.error(f"list_blobs error: {exc}")
-        db.upsert_sku_result(
-            run_id, sku_id, "failed", container_name, container_source,
-            reprocess, 0, 0, 0, 0, [], [],
-            error_code=type(exc).__name__, error_msg=str(exc),
-            category=category,
-        )
-        return "failed"
+    # ── Resolve blob list ─────────────────────────────────────────────────────
+    # If source_blobs provided (from Unbxd gallery URLs) → use exact paths.
+    # Otherwise fall back to listing by SKU prefix in Azure.
+    if source_blobs:
+        blobs = source_blobs
+        sku_log.info(f"Using {len(blobs)} exact blob(s) from Unbxd gallery")
+    else:
+        try:
+            blobs = azure.list_sku_blobs(container_name, sku_id)
+        except Exception as exc:
+            sku_log.error(f"list_blobs error: {exc}")
+            db.upsert_sku_result(
+                run_id, sku_id, "failed", container_name, container_source,
+                reprocess, 0, 0, 0, 0, [], [],
+                error_code=type(exc).__name__, error_msg=str(exc),
+                category=category,
+            )
+            return "failed"
 
-    if not blobs:
-        sku_log.warning(f"No blobs found — container={container_name}  prefix=lifestyle/{sku_id}")
-        db.upsert_sku_result(
-            run_id, sku_id, "failed", container_name, container_source,
-            reprocess, 0, 0, 0, 0, [], [],
-            error_code="NO_BLOBS",
-            error_msg=f"No blobs in {container_name} for prefix lifestyle/{sku_id}",
-            category=category,
-        )
-        return "failed"
+        if not blobs:
+            sku_log.warning(f"No blobs found — container={container_name}  prefix=lifestyle/{sku_id}")
+            db.upsert_sku_result(
+                run_id, sku_id, "failed", container_name, container_source,
+                reprocess, 0, 0, 0, 0, [], [],
+                error_code="NO_BLOBS",
+                error_msg=f"No blobs in {container_name} for prefix lifestyle/{sku_id}",
+                category=category,
+            )
+            return "failed"
 
     sku_log.info(f"Found {len(blobs)} blob(s)")
 
@@ -236,11 +244,24 @@ def worker_loop(
             break
 
         queue_id  = task["id"]
+        # Task-level pad_mode overrides run-level pad_mode
+        task_pad_mode = task.get("pad_mode") or pad_mode
+
+        # Parse source_blobs JSON if present (exact blob paths from Unbxd)
+        raw_blobs = task.get("source_blobs")
+        if isinstance(raw_blobs, str):
+            import json as _json
+            try:
+                raw_blobs = _json.loads(raw_blobs)
+            except Exception:
+                raw_blobs = None
+
         sku_entry = {
-            "sku_id":    task["sku_id"],
-            "container": task["container"],
-            "reprocess": bool(task["reprocess"]),
-            "category":  task.get("category"),
+            "sku_id":        task["sku_id"],
+            "container":     task["container"],
+            "reprocess":     bool(task["reprocess"]),
+            "category":      task.get("category"),
+            "source_blobs":  raw_blobs,   # exact paths or None
         }
 
         status = "failed"
@@ -249,7 +270,7 @@ def worker_loop(
         try:
             status = process_sku(
                 sku_entry, run_id, azure,
-                pad_mode, stop_lock, stop_flag, dry_run,
+                task_pad_mode, stop_lock, stop_flag, dry_run,
             )
         except StopSignal as exc:
             error  = str(exc)

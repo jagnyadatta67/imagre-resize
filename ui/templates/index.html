@@ -354,6 +354,7 @@
     <button class="tab-btn" onclick="switchTab('qcreport', this); loadQcReport()">📊 QC Report</button>
     <button class="tab-btn" onclick="switchTab('brokenimages', this); loadBrokenImages()">🚨 Broken Images</button>
     <button class="tab-btn" onclick="switchTab('processmissing', this); loadProcessMissing()">🔄 Process Missing</button>
+    <button class="tab-btn" onclick="switchTab('skuprocess', this); initSkuProcess()">📤 Process by SKU List</button>
   </div>
 
   <!-- ══ TAB: RUNS ════════════════════════════════════════════ -->
@@ -998,6 +999,140 @@ FAILED_SKU_ID,,true</pre>
     </div>
 
   </div><!-- /tab-processmissing -->
+
+  <!-- ══ TAB: PROCESS BY SKU LIST ════════════════════════════ -->
+  <div id="tab-skuprocess" class="tab-panel">
+
+    <!-- Header -->
+    <div style="margin-bottom:20px;">
+      <h2 style="font-size:1.05rem; font-weight:700; color:#1e293b; margin:0;">📤 Process by SKU List</h2>
+      <p style="font-size:.8rem; color:#94a3b8; margin:4px 0 0;">
+        Paste SKU IDs → fetch from Unbxd → auto-detect container &amp; pad mode → process
+      </p>
+    </div>
+
+    <!-- Step 1: Input -->
+    <div class="card" style="margin-bottom:16px;">
+      <div style="font-size:.82rem; font-weight:700; color:#374151; margin-bottom:10px;">
+        Step 1 — Paste SKU IDs <span style="color:#94a3b8; font-weight:400;">(one per line, max 1000)</span>
+      </div>
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <textarea id="sp-textarea"
+          placeholder="1000008748896&#10;1000011004302&#10;1000012018292-Black-Black&#10;..."
+          style="flex:1; height:160px; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px;
+                 font-family:ui-monospace,monospace; font-size:.78rem; resize:vertical; outline:none;
+                 line-height:1.6;"
+          onfocus="this.style.borderColor='#6366f1'"
+          onblur="this.style.borderColor='#e2e8f0'"
+          oninput="updateSpCount()"></textarea>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <!-- File upload -->
+          <label style="display:flex; align-items:center; gap:6px; padding:8px 14px;
+                         border:1px solid #e2e8f0; border-radius:8px; cursor:pointer;
+                         font-size:.78rem; font-weight:600; color:#374151; background:#fff;
+                         transition:all .15s; white-space:nowrap;"
+                 onmouseover="this.style.background='#f1f5f9'"
+                 onmouseout="this.style.background='#fff'">
+            📁 Upload .txt
+            <input type="file" accept=".txt,.csv" style="display:none;" onchange="loadSpFile(this)"/>
+          </label>
+          <button onclick="clearSpInput()"
+                  style="padding:8px 14px; border:1px solid #fecaca; border-radius:8px;
+                         background:#fff; color:#ef4444; font-size:.78rem; font-weight:600; cursor:pointer;">
+            🗑 Clear
+          </button>
+        </div>
+      </div>
+      <div style="margin-top:8px; font-size:.75rem; color:#94a3b8;" id="sp-count">0 SKU IDs</div>
+    </div>
+
+    <!-- Step 2: Fetch button -->
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+      <button id="sp-fetch-btn" onclick="fetchSpSkus()"
+              style="padding:9px 28px; border-radius:10px; background:#6366f1; color:#fff;
+                     border:none; font-size:.88rem; font-weight:700; cursor:pointer; transition:background .15s;">
+        🔍 Fetch from Unbxd
+      </button>
+      <span id="sp-fetch-status" style="font-size:.8rem; color:#94a3b8;"></span>
+    </div>
+
+    <!-- Step 3: Preview table (shown after fetch) -->
+    <div id="sp-preview-panel" style="display:none;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+        <div style="font-size:.85rem; font-weight:700; color:#1e293b;">
+          Step 2 — Review &amp; Start
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <div id="sp-preview-summary"></div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <label style="font-size:.78rem; font-weight:600; color:#374151;">Workers</label>
+            <input id="sp-workers" type="number" min="1" max="50" value="10"
+                   style="width:60px; border:1px solid #e2e8f0; border-radius:7px; padding:5px 8px; font-size:.82rem; outline:none;"
+                   onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#e2e8f0'"/>
+          </div>
+          <button id="sp-start-btn" onclick="startSpProcessing()"
+                  style="padding:8px 22px; border-radius:9px; background:#10b981; color:#fff;
+                         border:none; font-size:.85rem; font-weight:700; cursor:pointer; transition:background .15s;">
+            ▶ Start Processing
+          </button>
+        </div>
+      </div>
+
+      <!-- Pad mode legend -->
+      <div style="display:flex; gap:10px; margin-bottom:12px; font-size:.75rem; flex-wrap:wrap;">
+        <span style="background:#dbeafe; color:#1e40af; padding:3px 10px; border-radius:9999px; font-weight:600;">no = men / women / kids (crop:fill)</span>
+        <span style="background:#f3e8ff; color:#7c3aed; padding:3px 10px; border-radius:9999px; font-weight:600;">auto = bags / beauty / footwear / accessories</span>
+      </div>
+
+      <!-- Preview table -->
+      <div class="card" style="padding:0; overflow:hidden; margin-bottom:16px;">
+        <div class="overflow-x-auto">
+          <table class="tbl" id="sp-preview-table">
+            <thead>
+              <tr>
+                <th style="width:36px;">#</th>
+                <th>SKU ID</th>
+                <th>Category</th>
+                <th>Container</th>
+                <th style="text-align:center;">Images</th>
+                <th style="text-align:center;">Pad Mode</th>
+              </tr>
+            </thead>
+            <tbody id="sp-preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Not found list -->
+      <div id="sp-notfound-panel" style="display:none;">
+        <div style="font-size:.8rem; font-weight:700; color:#b91c1c; margin-bottom:8px;">
+          ⚠️ Not found in Unbxd (will be skipped):
+        </div>
+        <div id="sp-notfound-list"
+             style="background:#fff7f7; border:1px solid #fecaca; border-radius:8px; padding:10px 14px;
+                    font-family:ui-monospace,monospace; font-size:.75rem; color:#7f1d1d; line-height:1.8;
+                    max-height:120px; overflow-y:auto;"></div>
+      </div>
+    </div>
+
+    <!-- Progress panel -->
+    <div id="sp-progress-panel" style="display:none; margin-top:16px;">
+      <div class="card" style="padding:20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <span style="font-weight:700; color:#1e293b;" id="sp-prog-label">Processing…</span>
+            <span id="sp-prog-run-id" style="font-size:.72rem; color:#94a3b8; margin-left:8px; font-family:monospace;"></span>
+          </div>
+          <div id="sp-prog-badges" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+        </div>
+        <div style="background:#f1f5f9; border-radius:9999px; height:10px; overflow:hidden; margin-bottom:10px;">
+          <div id="sp-prog-bar" style="background:#10b981; height:100%; border-radius:9999px; transition:width .5s; width:0%;"></div>
+        </div>
+        <div style="font-size:.78rem; color:#94a3b8;" id="sp-prog-text">0 / 0</div>
+      </div>
+    </div>
+
+  </div><!-- /tab-skuprocess -->
 
 </div><!-- /dev-view -->
 
@@ -2700,6 +2835,178 @@ function undoQc(idx, skuId) {
       }
     })
     .catch(() => alert('Network error'));
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   PROCESS BY SKU LIST TAB
+   ═══════════════════════════════════════════════════════════ */
+
+let _spFetchedSkus   = [];   // [{sku_id, category, container, image_count, pad_mode}]
+let _spPollTimer     = null;
+
+function initSkuProcess() {
+  // nothing to load eagerly — wait for user input
+}
+
+function updateSpCount() {
+  const lines = document.getElementById('sp-textarea').value
+    .split('\n').map(l => l.trim()).filter(Boolean);
+  document.getElementById('sp-count').textContent = `${lines.length} SKU ID${lines.length !== 1 ? 's' : ''}`;
+}
+
+function clearSpInput() {
+  document.getElementById('sp-textarea').value = '';
+  document.getElementById('sp-count').textContent = '0 SKU IDs';
+  document.getElementById('sp-preview-panel').style.display = 'none';
+  document.getElementById('sp-progress-panel').style.display = 'none';
+  _spFetchedSkus = [];
+}
+
+function loadSpFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('sp-textarea').value = e.target.result;
+    updateSpCount();
+  };
+  reader.readAsText(file);
+  input.value = '';   // reset so same file can be re-uploaded
+}
+
+function fetchSpSkus() {
+  const lines = document.getElementById('sp-textarea').value
+    .split('\n').map(l => l.trim()).filter(Boolean);
+
+  if (!lines.length) { alert('Please paste some SKU IDs first.'); return; }
+  if (lines.length > 1000) { alert('Max 1000 SKUs per batch.'); return; }
+
+  const btn    = document.getElementById('sp-fetch-btn');
+  const status = document.getElementById('sp-fetch-status');
+
+  btn.disabled    = true;
+  btn.textContent = '⏳ Fetching…';
+  status.textContent = `Querying Unbxd for ${lines.length} SKUs…`;
+  document.getElementById('sp-preview-panel').style.display = 'none';
+
+  fetch('/api/process-skuids/fetch', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({sku_ids: lines}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert('Error: ' + data.error); return; }
+
+    _spFetchedSkus = data.found || [];
+    const notFound = data.not_found || [];
+
+    status.textContent = `✅ ${_spFetchedSkus.length} found, ⚠️ ${notFound.length} not found`;
+
+    // Build preview table
+    const tbody = document.getElementById('sp-preview-tbody');
+    tbody.innerHTML = _spFetchedSkus.map((s, i) => {
+      const padBadge = s.pad_mode === 'no'
+        ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;">no</span>`
+        : `<span style="background:#f3e8ff;color:#7c3aed;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;">auto</span>`;
+      return `<tr>
+        <td style="color:#94a3b8;font-size:.78rem;">${i+1}</td>
+        <td class="mono" style="font-size:.8rem;font-weight:600;">${s.sku_id}</td>
+        <td><span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:600;">${s.category}</span></td>
+        <td style="font-size:.8rem;color:#64748b;">${s.container}</td>
+        <td style="text-align:center;font-size:.8rem;">${s.image_count}</td>
+        <td style="text-align:center;">${padBadge}</td>
+      </tr>`;
+    }).join('');
+
+    // Summary
+    const noCount   = _spFetchedSkus.filter(s => s.pad_mode === 'no').length;
+    const autoCount = _spFetchedSkus.filter(s => s.pad_mode === 'auto').length;
+    document.getElementById('sp-preview-summary').innerHTML = `
+      <span style="background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">no: ${noCount}</span>
+      <span style="background:#f3e8ff;color:#7c3aed;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">auto: ${autoCount}</span>
+      <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_spFetchedSkus.length}</span>`;
+
+    // Not found panel
+    const nfPanel = document.getElementById('sp-notfound-panel');
+    if (notFound.length) {
+      document.getElementById('sp-notfound-list').textContent =
+        notFound.map(n => `${n.sku_id}  (${n.reason || 'not found'})`).join('\n');
+      nfPanel.style.display = 'block';
+    } else {
+      nfPanel.style.display = 'none';
+    }
+
+    document.getElementById('sp-preview-panel').style.display = 'block';
+  })
+  .catch(err => { alert('Network error: ' + err); })
+  .finally(() => {
+    btn.disabled    = false;
+    btn.textContent = '🔍 Fetch from Unbxd';
+  });
+}
+
+function startSpProcessing() {
+  if (!_spFetchedSkus.length) { alert('No SKUs to process.'); return; }
+
+  const workers = parseInt(document.getElementById('sp-workers').value) || 10;
+  const btn     = document.getElementById('sp-start-btn');
+
+  btn.disabled    = true;
+  btn.textContent = '⏳ Starting…';
+
+  fetch('/api/process-skuids/start', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({skus: _spFetchedSkus, workers}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      alert('Error: ' + data.error);
+      btn.disabled = false; btn.textContent = '▶ Start Processing';
+      return;
+    }
+    const runId = data.run_id;
+    document.getElementById('sp-progress-panel').style.display = 'block';
+    document.getElementById('sp-prog-run-id').textContent = runId.slice(0, 8);
+    document.getElementById('sp-prog-label').textContent =
+      `Processing ${data.total} SKUs (auto pad mode per category)`;
+
+    btn.textContent = '⏳ Running…';
+    _spPollTimer = setInterval(() => _pollSpProgress(runId, data.total), 3000);
+  })
+  .catch(err => {
+    alert('Network error: ' + err);
+    btn.disabled = false; btn.textContent = '▶ Start Processing';
+  });
+}
+
+function _pollSpProgress(runId, total) {
+  fetch(`/api/process-missing/status/${runId}`)
+    .then(r => r.json())
+    .then(d => {
+      const finished = d.done + d.failed + d.skipped;
+      const pct      = Math.round(finished / (d.total || total || 1) * 100);
+
+      document.getElementById('sp-prog-bar').style.width  = pct + '%';
+      document.getElementById('sp-prog-text').textContent = `${finished} / ${d.total || total} (${pct}%)`;
+      document.getElementById('sp-prog-badges').innerHTML = `
+        <span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">✅ ${d.done} done</span>
+        <span style="background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">❌ ${d.failed} failed</span>
+        <span style="background:#fef3c7;color:#92400e;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">⏭ ${d.skipped} skipped</span>
+        <span style="background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">🔄 ${d.running} running</span>`;
+
+      if (d.is_complete) {
+        clearInterval(_spPollTimer); _spPollTimer = null;
+        document.getElementById('sp-prog-bar').style.background = '#10b981';
+        document.getElementById('sp-prog-label').textContent    = '✅ Processing Complete!';
+        document.getElementById('sp-start-btn').disabled        = false;
+        document.getElementById('sp-start-btn').textContent     = '▶ Start Processing';
+      }
+    })
+    .catch(err => console.error('sp poll error:', err));
 }
 
 

@@ -114,6 +114,26 @@ def init_db() -> None:
         else:
             raise
 
+    # Add pad_mode column to sku_queue if upgrading existing DB
+    try:
+        cur.execute("ALTER TABLE sku_queue ADD COLUMN pad_mode VARCHAR(20) DEFAULT 'auto'")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass
+        else:
+            raise
+
+    # Add source_blobs column to sku_queue if upgrading existing DB
+    try:
+        cur.execute("ALTER TABLE sku_queue ADD COLUMN source_blobs JSON NULL")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass
+        else:
+            raise
+
     # ── SKU results (canonical, upserted on every run) ────────
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sku_results (
@@ -299,12 +319,14 @@ def insert_queue_batch(run_id: str, sku_list: list[dict]) -> int:
     conn = _conn()
     cur  = conn.cursor()
     rows = [
-        (run_id, s["sku_id"], s.get("container"), 1 if s["reprocess"] else 0, s.get("category"))
+        (run_id, s["sku_id"], s.get("container"), 1 if s["reprocess"] else 0,
+         s.get("category"), s.get("pad_mode", "auto"),
+         json.dumps(s["source_blobs"]) if s.get("source_blobs") else None)
         for s in sku_list
     ]
     cur.executemany("""
-        INSERT INTO sku_queue (run_id, sku_id, container, reprocess, category, status)
-        VALUES (%s, %s, %s, %s, %s, 'pending')
+        INSERT INTO sku_queue (run_id, sku_id, container, reprocess, category, pad_mode, source_blobs, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
     """, rows)
     conn.commit()
     inserted = len(rows)
@@ -348,7 +370,7 @@ def claim_next_task(run_id: str, worker_id: str) -> Optional[dict]:
         # Within a single run_id each worker processes one task at a time,
         # so (run_id, worker_id, status='running') is unique here.
         cur.execute("""
-            SELECT id, sku_id, container, reprocess, category
+            SELECT id, sku_id, container, reprocess, category, pad_mode, source_blobs
             FROM   sku_queue
             WHERE  run_id = %s AND worker_id = %s AND status = 'running'
             ORDER  BY claimed_at DESC

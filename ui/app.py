@@ -649,6 +649,95 @@ def index():
     )
 
 
+@app.route("/api/process-skuids/fetch", methods=["POST"])
+def api_process_skuids_fetch():
+    """
+    Fetch SKU metadata from Unbxd for a list of SKU IDs.
+    Body: {sku_ids: ["id1", "id2", ...]}
+    Returns: {found: [...], not_found: [...]}
+    """
+    if not _current_user():
+        return jsonify({"error": "Login required"}), 401
+
+    data    = request.get_json() or {}
+    raw_ids = data.get("sku_ids") or []
+    sku_ids = [s.strip() for s in raw_ids if str(s).strip()]
+
+    if not sku_ids:
+        return jsonify({"error": "No SKU IDs provided"}), 400
+    if len(sku_ids) > 1000:
+        return jsonify({"error": "Max 1000 SKUs per batch"}), 400
+
+    from modules.unbxd_client import fetch_skus_from_unbxd
+    result = fetch_skus_from_unbxd(sku_ids, workers=20)
+    return jsonify(result)
+
+
+@app.route("/api/process-skuids/start", methods=["POST"])
+def api_process_skuids_start():
+    """
+    Start pipeline for a confirmed SKU list (after Unbxd fetch preview).
+    Body: {skus: [{sku_id, container, category, pad_mode}, ...], workers}
+    Returns: {run_id, total}
+    """
+    if not _current_user():
+        return jsonify({"error": "Login required"}), 401
+
+    data    = request.get_json() or {}
+    skus    = data.get("skus", [])
+    workers = max(1, min(int(data.get("workers", 10)), 50))
+
+    if not skus:
+        return jsonify({"error": "No SKUs provided"}), 400
+
+    sku_list = [
+        {
+            "sku_id":    s["sku_id"],
+            "container": s.get("container", ""),
+            "category":  s.get("category", ""),
+            "pad_mode":  s.get("pad_mode", "auto"),
+            "reprocess": False,
+        }
+        for s in skus
+    ]
+
+    import uuid as _uuid
+    run_id = str(_uuid.uuid4())
+
+    with _active_pipeline_lock:
+        _active_pipeline_runs[run_id] = {
+            "category":   "sku-list",
+            "pad_mode":   "mixed (auto-detected)",
+            "workers":    workers,
+            "total":      len(sku_list),
+            "started_at": datetime.now().isoformat(),
+            "status":     "running",
+        }
+
+    def _bg_run():
+        try:
+            _run_pipeline(
+                sku_list = sku_list,
+                run_id   = run_id,
+                pad_mode = "auto",   # fallback; each task overrides via pad_mode column
+                workers  = workers,
+                source   = "web/sku-list",
+            )
+        except Exception as exc:
+            import logging as _lg
+            _lg.getLogger("web.pipeline").error(f"SKU list pipeline error: {exc}")
+        finally:
+            with _active_pipeline_lock:
+                if run_id in _active_pipeline_runs:
+                    _active_pipeline_runs[run_id]["status"] = "done"
+
+    import threading as _threading
+    t = _threading.Thread(target=_bg_run, name=f"skulist-{run_id[:8]}", daemon=True)
+    t.start()
+
+    return jsonify({"run_id": run_id, "total": len(sku_list)})
+
+
 @app.route("/api/process-missing/categories")
 def api_process_missing_categories():
     """Return pending transformation categories with SKU counts."""
