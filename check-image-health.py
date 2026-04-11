@@ -371,6 +371,9 @@ def main() -> None:
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Ensure DB tables exist (safe to run every time — all CREATE IF NOT EXISTS)
+    pipeline_db.init_db()
+
     log.info("=" * 60)
     log.info("check-image-health  (Unbxd → CDN HEAD check)")
     log.info(f"  Workers    : {args.workers}")

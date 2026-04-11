@@ -663,25 +663,48 @@ def api_process_missing_categories():
 @app.route("/api/process-missing/start", methods=["POST"])
 def api_process_missing_start():
     """
-    Trigger pipeline for pending SKUs in a category.
-    Body JSON: {category, pad_mode, workers}
-    Returns: {run_id, total}
+    Trigger pipeline for pending SKUs in one or more categories.
+    Body JSON: {categories: null|[str,...], pad_mode, workers}
+      - categories=null  → process ALL pending categories
+      - categories=[...] → process only those categories
+    Returns: {run_id, total, pad_mode}
     """
     if not _current_user():
         return jsonify({"error": "Login required"}), 401
 
-    data     = request.get_json() or {}
-    category = data.get("category", "").strip() or None
-    pad_mode = data.get("pad_mode", "auto")
-    workers  = max(1, min(int(data.get("workers", 10)), 50))
+    data       = request.get_json() or {}
+    categories = data.get("categories")   # None = all, list = specific
+    pad_mode   = data.get("pad_mode", "auto")
+    workers    = max(1, min(int(data.get("workers", 10)), 50))
 
     if pad_mode not in ("auto", "white", "gen_fill", "no"):
         pad_mode = "auto"
 
-    # Get pending SKUs
-    sku_rows = pipeline_db.get_pending_transformation_skus(category)
+    # Normalise: empty list → treat as all
+    if isinstance(categories, list) and len(categories) == 0:
+        categories = None
+
+    # Fetch pending SKUs — if multiple categories, query each and merge
+    if categories is None:
+        sku_rows = pipeline_db.get_pending_transformation_skus(None)
+        cat_label = "all"
+    else:
+        sku_rows = []
+        for cat in categories:
+            sku_rows.extend(pipeline_db.get_pending_transformation_skus(cat))
+        cat_label = ", ".join(categories)
+
     if not sku_rows:
         return jsonify({"error": "No pending SKUs for this selection"}), 400
+
+    # Deduplicate by sku_id (safety in case categories overlap)
+    seen = set()
+    deduped = []
+    for r in sku_rows:
+        if r["sku_id"] not in seen:
+            seen.add(r["sku_id"])
+            deduped.append(r)
+    sku_rows = deduped
 
     # Build sku_list for pipeline_runner
     sku_list = [
@@ -699,7 +722,7 @@ def api_process_missing_start():
     # Track in active runs
     with _active_pipeline_lock:
         _active_pipeline_runs[run_id] = {
-            "category":   category or "all",
+            "category":   cat_label,
             "pad_mode":   pad_mode,
             "workers":    workers,
             "total":      len(sku_list),

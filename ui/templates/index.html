@@ -2708,7 +2708,7 @@ function undoQc(idx, skuId) {
    ═══════════════════════════════════════════════════════════ */
 
 let _pmLoaded       = false;
-let _pmCategory     = null;   // currently selected category
+let _pmCategories   = new Set();  // multi-select: set of selected category strings
 let _pmPadMode      = 'auto';
 let _pmPollTimer    = null;
 let _pmCurrentRunId = null;
@@ -2747,9 +2747,9 @@ function loadProcessMissing(force) {
         return;
       }
 
-      // "All" pill + per-category pills
-      let html = `<button class="pm-cat-pill" data-cat=""
-        onclick="selectPmCategory(this, '')"
+      // "All" pill + per-category pills (multi-select)
+      let html = `<button class="pm-cat-pill" data-cat="__all__"
+        onclick="togglePmCategory(this)"
         style="padding:7px 16px; border-radius:9999px; border:2px solid #e2e8f0;
                background:#fff; color:#64748b; font-size:.8rem; font-weight:600; cursor:pointer;">
         All (${cats.reduce((s,c)=>s+c.cnt, 0)})
@@ -2757,9 +2757,9 @@ function loadProcessMissing(force) {
 
       cats.forEach(c => {
         html += `<button class="pm-cat-pill" data-cat="${c.category}"
-          onclick="selectPmCategory(this, '${c.category}')"
+          onclick="togglePmCategory(this)"
           style="padding:7px 16px; border-radius:9999px; border:2px solid #e2e8f0;
-                 background:#fff; color:#64748b; font-size:.8rem; font-weight:600; cursor:pointer;">
+                 background:#fff; color:#64748b; font-size:.8rem; font-weight:600; cursor:pointer; transition:all .15s;">
           ${c.category} <span style="background:#fef3c7;color:#92400e;border-radius:9999px;
                                      padding:1px 7px;margin-left:4px;font-size:.7rem;">${c.cnt}</span>
         </button>`;
@@ -2769,20 +2769,54 @@ function loadProcessMissing(force) {
     .catch(err => console.error('pm categories error:', err));
 }
 
-function selectPmCategory(el, cat) {
-  _pmCategory = cat || null;
-  // Update pill styles
+function togglePmCategory(el) {
+  const cat = el.dataset.cat;
+
+  if (cat === '__all__') {
+    // All pill: clear individual selections, treat as "all"
+    _pmCategories.clear();
+    _pmCategories.add('__all__');
+  } else {
+    // Remove "all" if a specific category is clicked
+    _pmCategories.delete('__all__');
+    if (_pmCategories.has(cat)) {
+      _pmCategories.delete(cat);   // deselect if already selected
+    } else {
+      _pmCategories.add(cat);      // add to selection
+    }
+  }
+
+  // If nothing selected, disable start button
+  _updatePmPills();
+}
+
+function _updatePmPills() {
   document.querySelectorAll('.pm-cat-pill').forEach(b => {
-    const isActive = b.dataset.cat === (cat || '');
+    const isActive = _pmCategories.has(b.dataset.cat);
     b.style.borderColor = isActive ? '#6366f1' : '#e2e8f0';
     b.style.background  = isActive ? '#eef2ff' : '#fff';
     b.style.color       = isActive ? '#4f46e5' : '#64748b';
   });
-  // Enable start button
+
+  // Update selection label
   const btn = document.getElementById('pm-start-btn');
-  btn.disabled = false;
-  btn.style.opacity = '1';
-  btn.style.pointerEvents = 'auto';
+  const count = _pmCategories.has('__all__')
+    ? 'all categories'
+    : _pmCategories.size === 0
+      ? null
+      : `${_pmCategories.size} categor${_pmCategories.size > 1 ? 'ies' : 'y'}`;
+
+  if (count) {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.style.pointerEvents = 'auto';
+    btn.innerHTML = `▶ Start Processing <span style="background:rgba(255,255,255,.25);border-radius:6px;padding:1px 8px;font-size:.75rem;margin-left:4px;">${count}</span>`;
+  } else {
+    btn.disabled = true;
+    btn.style.opacity = '.5';
+    btn.style.pointerEvents = 'none';
+    btn.innerHTML = '▶ Start Processing';
+  }
 }
 
 function setPadMode(el) {
@@ -2802,13 +2836,20 @@ function startProcessMissing() {
   btn.disabled = true;
   btn.textContent = '⏳ Starting…';
 
+  // Build categories payload: null = all, array = specific ones
+  const catPayload = _pmCategories.has('__all__') || _pmCategories.size === 0
+    ? null
+    : Array.from(_pmCategories);
+
+  const catLabel = catPayload ? catPayload.join(', ') : 'all categories';
+
   fetch('/api/process-missing/start', {
     method:  'POST',
     headers: {'Content-Type': 'application/json'},
     body:    JSON.stringify({
-      category: _pmCategory,
-      pad_mode: _pmPadMode,
-      workers:  workers,
+      categories: catPayload,   // array or null
+      pad_mode:   _pmPadMode,
+      workers:    workers,
     }),
   })
   .then(r => r.json())
@@ -2816,7 +2857,7 @@ function startProcessMissing() {
     if (data.error) {
       alert('Error: ' + data.error);
       btn.disabled = false;
-      btn.textContent = '▶ Start Processing';
+      btn.innerHTML = '▶ Start Processing';
       return;
     }
     _pmCurrentRunId = data.run_id;
@@ -2825,7 +2866,7 @@ function startProcessMissing() {
     document.getElementById('pm-progress-panel').style.display = 'block';
     document.getElementById('pm-prog-run-id').textContent = data.run_id.slice(0, 8);
     document.getElementById('pm-prog-label').textContent =
-      `Processing ${data.total} SKUs (${_pmCategory || 'all categories'}) — pad: ${data.pad_mode}`;
+      `Processing ${data.total} SKUs (${catLabel}) — pad: ${data.pad_mode}`;
 
     btn.textContent = '⏳ Running…';
     _pmPollTimer = setInterval(() => _pollPmProgress(data.run_id), 3000);
