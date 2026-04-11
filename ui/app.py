@@ -692,11 +692,12 @@ def api_process_skuids_start():
 
     sku_list = [
         {
-            "sku_id":    s["sku_id"],
-            "container": s.get("container", ""),
-            "category":  s.get("category", ""),
-            "pad_mode":  s.get("pad_mode", "auto"),
-            "reprocess": False,
+            "sku_id":       s["sku_id"],
+            "container":    s.get("container", ""),
+            "category":     s.get("category", ""),
+            "pad_mode":     s.get("pad_mode", "auto"),
+            "reprocess":    False,
+            "source_blobs": s.get("source_blobs"),  # exact blob paths from Unbxd
         }
         for s in skus
     ]
