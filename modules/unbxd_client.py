@@ -44,13 +44,22 @@ UNBXD_HEADERS = {
 }
 
 
+_AUTO_KEYWORDS = ("beauty", "watches", "addons", "sunglass", "accessories")
+
 def pad_mode_for_category(category: str) -> str:
     """
     Auto-detect Cloudinary pad mode from L2 category.
-      men-*, women-*, kids-*  →  'no'   (crop:fill — apparel, no padding)
-      everything else         →  'auto' (pad with bg — bags, beauty, footwear, etc.)
+
+      Always 'auto' (pad with bg) if category contains any of:
+        beauty, watches, addons, sunglass, accessories
+
+      Otherwise:
+        men-*, women-*, kids-*  →  'no'   (crop:fill — apparel)
+        everything else         →  'auto'
     """
     cat = (category or "").lower().strip()
+    if any(kw in cat for kw in _AUTO_KEYWORDS):
+        return "auto"
     if cat.startswith(("men", "women", "kids")):
         return "no"
     return "auto"
