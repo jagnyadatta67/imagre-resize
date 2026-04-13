@@ -1648,12 +1648,12 @@ def api_reprocess_image():
     if method not in {"gen_fill", "auto", "fill", "center"}:
         return jsonify({"ok": False, "error": "method must be gen_fill, auto, fill, or center"}), 400
 
-    # ── 1. Fetch container from DB ────────────────────────────
+    # ── 1. Fetch container + brand from DB ───────────────────────
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
         cur.execute(
-            "SELECT container_name FROM sku_results WHERE sku_id = %s",
+            "SELECT container_name, brand FROM sku_results WHERE sku_id = %s",
             (sku_id,)
         )
         row = cur.fetchone()
@@ -1665,11 +1665,20 @@ def api_reprocess_image():
         return jsonify({"ok": False, "error": f"No DB record for SKU '{sku_id}'"}), 404
 
     container_name = row["container_name"]
-    logger = logging.getLogger(f"reprocess.{sku_id[:30]}")
+    brand          = row.get("brand") or ""
+    logger         = logging.getLogger(f"reprocess.{sku_id[:30]}")
+
+    # ── Brand-based source/target paths ──────────────────────────
+    if brand == "babyshop":
+        src_prefix    = BABYSHOP_SOURCE_PREFIX   # "babyshopstores/"
+        target_folder = BABYSHOP_TARGET_FOLDER   # "babyshopstores-new"
+    else:
+        src_prefix    = SOURCE_BLOB_PREFIX       # "lifestyle/"
+        target_folder = None                     # uses TARGET_CONTAINER default
 
     try:
         # ── 2. Download original ──────────────────────────────
-        blob_name   = f"lifestyle/{filename}"
+        blob_name   = f"{src_prefix}{filename}"
         image_bytes = _azure.download_blob_bytes(container_name, blob_name)
 
         # ── 3. Reprocess (no Vision AI) ───────────────────────
@@ -1677,8 +1686,8 @@ def api_reprocess_image():
             image_bytes, filename, sku_id, method, logger
         )
 
-        # ── 4. Upload result to lifestyle-newc/ ───────────────
-        azure_url = _azure.upload_to_newc(filename, output_bytes, container_name)
+        # ── 4. Upload result ──────────────────────────────────
+        azure_url = _azure.upload_to_newc(filename, output_bytes, container_name, target_folder=target_folder)
 
         # ── 5. Save audit row (with incremented reprocess_count) ─
         db2  = get_db()
