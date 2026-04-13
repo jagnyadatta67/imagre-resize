@@ -64,7 +64,10 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 
 AZURE_ACCOUNT_NAME = os.getenv("AZURE_ACCOUNT_NAME", "")
 AZURE_ACCOUNT_KEY  = os.getenv("AZURE_ACCOUNT_KEY", "")
-TARGET_CONTAINER   = os.getenv("TARGET_CONTAINER", "lifestyle-converted")
+TARGET_CONTAINER        = os.getenv("TARGET_CONTAINER",       "lifestyle-converted")
+SOURCE_BLOB_PREFIX      = os.getenv("SOURCE_BLOB_PREFIX",     "lifestyle/")
+BABYSHOP_TARGET_FOLDER  = os.getenv("BABYSHOP_TARGET_FOLDER", "babyshopstores-new")
+BABYSHOP_SOURCE_PREFIX  = os.getenv("BABYSHOP_SOURCE_PREFIX", "babyshopstores/")
 # UPLOAD_USERS kept as a no-op reference — no longer used for validation (login handles auth)
 UPLOAD_USERS: list[str] = []
 
@@ -251,12 +254,15 @@ def make_original_sas_url(processed_azure_url: str) -> str:
     """
     Derive original-image SAS URL from a processed URL.
 
-    Processed : {container}/lifestyle-converted/{filename}
-    Original  : {container}/lifestyle/{filename}
+    Lifestyle  : {container}/lifestyle-newc/{filename}    → {container}/lifestyle/{filename}
+    Baby Shop  : {container}/babyshopstores-new/{filename} → {container}/babyshopstores/{filename}
     """
-    if processed_azure_url and f"/{TARGET_CONTAINER}/" in processed_azure_url:
-        original_url = processed_azure_url.replace(f"/{TARGET_CONTAINER}/", "/lifestyle/")
-        return make_sas_url(original_url)
+    if not processed_azure_url:
+        return ""
+    if f"/{TARGET_CONTAINER}/" in processed_azure_url:
+        return make_sas_url(processed_azure_url.replace(f"/{TARGET_CONTAINER}/", f"/{SOURCE_BLOB_PREFIX}"))
+    if f"/{BABYSHOP_TARGET_FOLDER}/" in processed_azure_url:
+        return make_sas_url(processed_azure_url.replace(f"/{BABYSHOP_TARGET_FOLDER}/", f"/{BABYSHOP_SOURCE_PREFIX}"))
     return ""
 
 
@@ -288,13 +294,17 @@ def make_cf_url(azure_url: str) -> str:
 def make_cf_original_url(processed_azure_url: str) -> str:
     """
     Derive CF CDN URL for the original (pre-processing) image.
-    Swaps /{TARGET_CONTAINER}/ → /lifestyle/ in the blob path, then builds CF URL.
-    Returns "" when container not mapped or path doesn't contain TARGET_CONTAINER.
+    Lifestyle  : swap /{TARGET_CONTAINER}/       → /{SOURCE_BLOB_PREFIX}
+    Baby Shop  : swap /{BABYSHOP_TARGET_FOLDER}/ → /{BABYSHOP_SOURCE_PREFIX}
+    Returns "" when container not mapped or no known target folder found.
     """
-    if not processed_azure_url or f"/{TARGET_CONTAINER}/" not in processed_azure_url:
+    if not processed_azure_url:
         return ""
-    original_azure = processed_azure_url.replace(f"/{TARGET_CONTAINER}/", "/lifestyle/")
-    return make_cf_url(original_azure)
+    if f"/{TARGET_CONTAINER}/" in processed_azure_url:
+        return make_cf_url(processed_azure_url.replace(f"/{TARGET_CONTAINER}/", f"/{SOURCE_BLOB_PREFIX}"))
+    if f"/{BABYSHOP_TARGET_FOLDER}/" in processed_azure_url:
+        return make_cf_url(processed_azure_url.replace(f"/{BABYSHOP_TARGET_FOLDER}/", f"/{BABYSHOP_SOURCE_PREFIX}"))
+    return ""
 
 
 # ── Template filters ──────────────────────────────────────────
@@ -1035,7 +1045,6 @@ def api_babyshop_start():
     if not skus:
         return jsonify({"error": "No SKUs provided"}), 400
 
-    from config import BABYSHOP_TARGET_FOLDER
     sku_list = [
         {
             "sku_id":       s["sku_id"],
