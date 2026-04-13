@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Baby Shop{% endblock %}
+
+{% block content %}
+
+<!-- ══════════════════════════════════════════════════════════
+     BABY SHOP PAGE
+     ══════════════════════════════════════════════════════════ -->
+
+<!-- ── Category browse bar ──────────────────────────────────── -->
+{% if cats %}
+<div style="background:#fff;border-radius:14px;border:1px solid #e5e7eb;padding:14px 18px;margin-bottom:22px;">
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <span style="font-size:.7rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;margin-right:2px;">
+      Browse
+    </span>
+    {% for c in cats %}
+    <a href="/BabyShop?category={{ c.category }}"
+       style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;
+              border:1.5px solid {% if category == c.category %}#6366f1{% else %}#e2e8f0{% endif %};
+              background:{% if category == c.category %}#eef2ff{% else %}#f8fafc{% endif %};
+              color:{% if category == c.category %}#4f46e5{% else %}#475569{% endif %};
+              font-size:.8rem;font-weight:600;text-decoration:none;transition:all .15s;">
+      🛍 {{ c.category }}
+      <span style="display:inline-flex;align-items:center;gap:1px;padding:1px 8px;border-radius:999px;
+                   background:{% if category == c.category %}#c7d2fe{% else %}#f1f5f9{% endif %};
+                   font-size:.66rem;font-weight:700;line-height:1.6;">
+        <span style="color:#10b981;">{{ c.done_count | int }}</span>
+        <span style="color:#94a3b8;margin:0 1px;">/</span>
+        <span style="color:#64748b;">{{ c.total_count | int }}</span>
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Search bar ────────────────────────────────────────────── -->
+{% if not results and not search and not category %}
+<div style="display:flex;flex-direction:column;align-items:center;padding:72px 0 48px;">
+  <div style="font-size:2.8rem;margin-bottom:12px;">🛍</div>
+  <h1 style="font-size:1.7rem;font-weight:700;color:#1e293b;margin-bottom:6px;">Baby Shop Image Search</h1>
+  <p style="color:#94a3b8;font-size:.9rem;margin-bottom:32px;">Enter a SKU ID or browse by category above</p>
+
+  <form method="get" action="/BabyShop" style="width:100%;max-width:520px;display:flex;gap:10px;">
+    <input name="q" value="{{ search }}" placeholder="e.g. 1100005348 or partial SKU…" autofocus
+      style="flex:1;border:2px solid #e2e8f0;border-radius:12px;padding:14px 18px;font-size:.95rem;outline:none;"
+      onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#e2e8f0'"/>
+    <button type="submit" class="btn-primary" style="padding:14px 28px;border-radius:12px;font-size:.95rem;">Search</button>
+  </form>
+
+  <!-- Stats strip -->
+  <div style="display:flex;gap:32px;margin-top:56px;text-align:center;">
+    {% set total_all = cats | sum(attribute='total_count') | int %}
+    {% set done_all  = cats | sum(attribute='done_count')  | int %}
+    <div>
+      <div style="font-size:1.6rem;font-weight:700;color:#1e293b;">{{ total_all }}</div>
+      <div style="font-size:.75rem;color:#94a3b8;margin-top:2px;">Total SKUs</div>
+    </div>
+    <div style="width:1px;background:#e2e8f0;"></div>
+    <div>
+      <div style="font-size:1.6rem;font-weight:700;color:#10b981;">{{ done_all }}</div>
+      <div style="font-size:.75rem;color:#94a3b8;margin-top:2px;">Passed</div>
+    </div>
+    <div style="width:1px;background:#e2e8f0;"></div>
+    <div>
+      <div style="font-size:1.6rem;font-weight:700;color:#ef4444;">{{ total_all - done_all }}</div>
+      <div style="font-size:.75rem;color:#94a3b8;margin-top:2px;">Pending / Failed</div>
+    </div>
+  </div>
+</div>
+
+{% else %}
+
+<!-- ── Results header ─────────────────────────────────────────── -->
+<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">
+  <div>
+    {% if category %}
+      <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;margin:0;">{{ category }}</h2>
+      <div style="font-size:.82rem;color:#64748b;margin-top:2px;">{{ total }} SKU{{ 's' if total != 1 }}</div>
+    {% elif search %}
+      <h2 style="font-size:1.1rem;font-weight:700;color:#1e293b;margin:0;">
+        {{ total }} result{{ 's' if total != 1 }} for <span style="color:#6366f1;">"{{ search }}"</span>
+      </h2>
+    {% endif %}
+  </div>
+
+  <!-- Search + filter -->
+  <form method="get" action="/BabyShop" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    {% if category %}<input type="hidden" name="category" value="{{ category }}">{% endif %}
+    <a href="/BabyShop?{% if category %}category={{ category }}&{% endif %}q={{ search }}"
+       style="padding:6px 12px;border-radius:20px;border:1px solid {% if not status %}#6366f1{% else %}#e2e8f0{% endif %};
+              background:{% if not status %}#eef2ff{% else %}#fff{% endif %};
+              color:{% if not status %}#4f46e5{% else %}#374151{% endif %};
+              font-size:.8rem;font-weight:600;text-decoration:none;">All</a>
+    <a href="/BabyShop?{% if category %}category={{ category }}&{% endif %}q={{ search }}&status=done"
+       style="padding:6px 12px;border-radius:20px;border:1px solid {% if status=='done' %}#6366f1{% else %}#e2e8f0{% endif %};
+              background:{% if status=='done' %}#eef2ff{% else %}#fff{% endif %};
+              color:{% if status=='done' %}#4f46e5{% else %}#374151{% endif %};
+              font-size:.8rem;font-weight:600;text-decoration:none;">✅ Passed</a>
+    <a href="/BabyShop?{% if category %}category={{ category }}&{% endif %}q={{ search }}&status=failed"
+       style="padding:6px 12px;border-radius:20px;border:1px solid {% if status=='failed' %}#6366f1{% else %}#e2e8f0{% endif %};
+              background:{% if status=='failed' %}#eef2ff{% else %}#fff{% endif %};
+              color:{% if status=='failed' %}#4f46e5{% else %}#374151{% endif %};
+              font-size:.8rem;font-weight:600;text-decoration:none;">❌ Failed</a>
+    <div style="display:flex;gap:6px;">
+      <input name="q" value="{{ search }}" placeholder="Search SKU ID…"
+        style="padding:7px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:.85rem;width:180px;"/>
+      <button type="submit" class="btn-primary" style="padding:7px 16px;border-radius:8px;">Search</button>
+      {% if search or category or status %}
+      <a href="/BabyShop" style="padding:7px 14px;border:1px solid #e2e8f0;border-radius:8px;
+         font-size:.83rem;color:#64748b;text-decoration:none;background:#fff;">✕ Clear</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<!-- ── SKU grid ───────────────────────────────────────────────── -->
+{% if results %}
+<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:16px;">
+  {% for s in results %}
+  {% set status_color = '#10b981' if s.status == 'done' else ('#f59e0b' if s.status == 'skipped' else '#ef4444') %}
+  {% set img_src = (s.listing_azure_url + '?v=1') if s.listing_azure_url else 'https://placehold.co/190x253?text=No+Image' %}
+  <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;transition:box-shadow .15s;"
+       onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,.1)'" onmouseout="this.style.boxShadow='none'">
+    <a href="/?dq={{ s.sku_id }}" target="_blank" style="text-decoration:none;display:block;">
+      <img src="{{ img_src }}" alt="{{ s.sku_id }}" loading="lazy"
+        style="width:100%;aspect-ratio:3/4;object-fit:contain;background:#f8fafc;"
+        onerror="this.src='https://placehold.co/190x253?text=No+Image'">
+      <div style="padding:10px;">
+        <div style="font-weight:700;font-size:.82rem;color:#1e293b;margin-bottom:4px;
+                    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ s.sku_id }}</div>
+        <div style="font-size:.75rem;color:#64748b;margin-bottom:6px;">📦 {{ s.blob_count or 0 }} images</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+          <span style="padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;color:#fff;background:{{ status_color }};">
+            {{ s.status }}
+          </span>
+          {% if s.last_processed_at %}
+          <span style="font-size:.68rem;color:#94a3b8;">{{ s.last_processed_at[:10] }}</span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ── Pagination ─────────────────────────────────────────────── -->
+{% if total_pages > 1 %}
+<div style="display:flex;justify-content:center;gap:8px;margin-top:28px;flex-wrap:wrap;">
+  {% if page > 1 %}
+  <a href="/BabyShop?q={{ search }}&category={{ category }}&status={{ status }}&page={{ page - 1 }}"
+     style="padding:7px 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:.83rem;color:#374151;text-decoration:none;background:#fff;">◀ Prev</a>
+  {% endif %}
+
+  {% for p in range([1, page-2]|max, [total_pages+1, page+3]|min) %}
+  <a href="/BabyShop?q={{ search }}&category={{ category }}&status={{ status }}&page={{ p }}"
+     style="padding:7px 14px;border-radius:8px;font-size:.83rem;text-decoration:none;
+            {% if p == page %}background:#6366f1;color:#fff;border:1px solid #6366f1;
+            {% else %}background:#fff;color:#374151;border:1px solid #e2e8f0;{% endif %}">{{ p }}</a>
+  {% endfor %}
+
+  {% if page < total_pages %}
+  <a href="/BabyShop?q={{ search }}&category={{ category }}&status={{ status }}&page={{ page + 1 }}"
+     style="padding:7px 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:.83rem;color:#374151;text-decoration:none;background:#fff;">Next ▶</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div style="text-align:center;padding:60px 0;color:#94a3b8;">
+  <div style="font-size:2.5rem;margin-bottom:12px;">🔍</div>
+  <div style="font-size:.95rem;">No Baby Shop SKUs found matching your search.</div>
+  <a href="/BabyShop" style="display:inline-block;margin-top:16px;color:#6366f1;font-size:.85rem;">← Back to Baby Shop</a>
+</div>
+{% endif %}
+
+{% endif %}
+
+{% endblock %}

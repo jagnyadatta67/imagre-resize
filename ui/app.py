@@ -615,6 +615,55 @@ def logout():
     return redirect(url_for("login"))
 
 
+@app.route("/BabyShop")
+@app.route("/babyshop")
+def babyshop_page():
+    """Dedicated Baby Shop browse + search page."""
+    if request.args.get("re") == "1" and not _current_user():
+        return redirect(url_for("login", next=request.url))
+
+    search   = request.args.get("q", "").strip()
+    category = request.args.get("category", "").strip()
+    status   = request.args.get("status", "").strip()
+    page     = max(1, int(request.args.get("page", "1")))
+    per_page = 48
+    offset   = (page - 1) * per_page
+
+    # Category pills
+    cats = pipeline_db.get_brand_categories("babyshop")
+
+    # SKU results (when searching or filtering by category)
+    results = []
+    total   = 0
+    if search or category:
+        results, total = pipeline_db.get_skus_by_brand(
+            "babyshop",
+            category = category or None,
+            status   = status   or None,
+            search   = search   or None,
+            limit    = per_page,
+            offset   = offset,
+        )
+        for r in results:
+            if r.get("last_processed_at"):
+                r["last_processed_at"] = r["last_processed_at"].strftime("%Y-%m-%d %H:%M:%S")
+
+    total_pages = max(1, -(-total // per_page))  # ceil division
+
+    return render_template(
+        "babyshop.html",
+        cats          = cats,
+        results       = results,
+        total         = total,
+        total_pages   = total_pages,
+        page          = page,
+        search        = search,
+        category      = category,
+        status        = status,
+        show_reprocess= bool(_current_user()),
+    )
+
+
 @app.route("/")
 def index():
     bq = request.args.get("bq", "").strip()   # business search query
