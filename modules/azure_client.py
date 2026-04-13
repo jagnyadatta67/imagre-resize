@@ -62,16 +62,17 @@ class AzureClient:
 
     # ── Source: list blobs ────────────────────────────────────
 
-    def list_sku_blobs(self, container_name: str, sku_id: str) -> list[str]:
+    def list_sku_blobs(self, container_name: str, sku_id: str, prefix: Optional[str] = None) -> list[str]:
         """
-        Return blob names that start with  lifestyle/{sku_id}
-        (e.g. lifestyle/1100004294-Multicolour_01.jpg).
+        Return blob names that start with  {prefix}{sku_id}
+        prefix defaults to SOURCE_BLOB_PREFIX from config (e.g. "lifestyle/").
+        For Baby Shop pass prefix="babyshopstores/".
         Raises on auth / network errors so the caller can log them.
         """
-        prefix = f"{SOURCE_BLOB_PREFIX}{sku_id}"
+        blob_prefix = f"{prefix or SOURCE_BLOB_PREFIX}{sku_id}"
         blobs  = sorted(
             b.name
-            for b in self._container(container_name).list_blobs(name_starts_with=prefix)
+            for b in self._container(container_name).list_blobs(name_starts_with=blob_prefix)
         )
         log.debug(f"list_sku_blobs  container={container_name}  sku={sku_id}  found={len(blobs)}")
         return blobs
@@ -86,13 +87,14 @@ class AzureClient:
 
     # ── Target: upload to lifestyle-converted/ inside the same container ──
 
-    def upload_to_newc(self, filename: str, image_bytes: bytes, container_name: str) -> str:
+    def upload_to_newc(self, filename: str, image_bytes: bytes, container_name: str, target_folder: Optional[str] = None) -> str:
         """
-        Upload image_bytes to  {container_name}/lifestyle-converted/{filename}.
-        Same container as the source, output goes into the lifestyle-converted/ folder.
+        Upload image_bytes to  {container_name}/{target_folder}/{filename}.
+        target_folder defaults to TARGET_CONTAINER from config (e.g. "lifestyle-newc").
+        For Baby Shop pass target_folder="babyshopstores-new".
         Returns the full Azure blob URL.
         """
-        blob_path = f"{TARGET_CONTAINER}/{filename}"
+        blob_path = f"{target_folder or TARGET_CONTAINER}/{filename}"
         self._container(container_name).upload_blob(
             blob_path,
             io.BytesIO(image_bytes),

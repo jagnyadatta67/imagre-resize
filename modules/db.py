@@ -134,6 +134,16 @@ def init_db() -> None:
         else:
             raise
 
+    # Add brand column to sku_queue if upgrading existing DB
+    try:
+        cur.execute("ALTER TABLE sku_queue ADD COLUMN brand VARCHAR(50) NULL")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass
+        else:
+            raise
+
     # ── SKU results (canonical, upserted on every run) ────────
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sku_results (
@@ -169,6 +179,25 @@ def init_db() -> None:
     except Exception as e:
         if "1060" in str(e) or "Duplicate column" in str(e):
             pass   # column already exists — safe to ignore
+        else:
+            raise
+
+    # Add brand column to sku_results if upgrading existing DB
+    try:
+        cur.execute("ALTER TABLE sku_results ADD COLUMN brand VARCHAR(50) NULL")
+        conn.commit()
+    except Exception as e:
+        if "1060" in str(e) or "Duplicate column" in str(e):
+            pass
+        else:
+            raise
+
+    try:
+        cur.execute("ALTER TABLE sku_results ADD INDEX idx_brand (brand)")
+        conn.commit()
+    except Exception as e:
+        if "1061" in str(e) or "Duplicate key name" in str(e):
+            pass
         else:
             raise
 
@@ -321,12 +350,13 @@ def insert_queue_batch(run_id: str, sku_list: list[dict]) -> int:
     rows = [
         (run_id, s["sku_id"], s.get("container"), 1 if s["reprocess"] else 0,
          s.get("category"), s.get("pad_mode", "auto"),
-         json.dumps(s["source_blobs"]) if s.get("source_blobs") else None)
+         json.dumps(s["source_blobs"]) if s.get("source_blobs") else None,
+         s.get("brand"))
         for s in sku_list
     ]
     cur.executemany("""
-        INSERT INTO sku_queue (run_id, sku_id, container, reprocess, category, pad_mode, source_blobs, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
+        INSERT INTO sku_queue (run_id, sku_id, container, reprocess, category, pad_mode, source_blobs, brand, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'pending')
     """, rows)
     conn.commit()
     inserted = len(rows)
@@ -370,7 +400,7 @@ def claim_next_task(run_id: str, worker_id: str) -> Optional[dict]:
         # Within a single run_id each worker processes one task at a time,
         # so (run_id, worker_id, status='running') is unique here.
         cur.execute("""
-            SELECT id, sku_id, container, reprocess, category, pad_mode, source_blobs
+            SELECT id, sku_id, container, reprocess, category, pad_mode, source_blobs, brand
             FROM   sku_queue
             WHERE  run_id = %s AND worker_id = %s AND status = 'running'
             ORDER  BY claimed_at DESC
@@ -472,6 +502,7 @@ def upsert_sku_result(
     error_code:         Optional[str] = None,
     error_msg:          Optional[str] = None,
     category:           Optional[str] = None,
+    brand:              Optional[str] = None,
 ) -> None:
     """
     INSERT the first time a SKU is seen; UPDATE on every subsequent run.
@@ -488,15 +519,16 @@ def upsert_sku_result(
 
     cur.execute("""
         INSERT INTO sku_results
-            (run_id, sku_id, status, category, container_name, container_source,
+            (run_id, sku_id, status, category, brand, container_name, container_source,
              reprocess, blob_count, cloudinary_sent, cloudinary_skipped,
              azure_uploaded, cloudinary_urls, azure_urls, listing_azure_url,
              error_code, error_msg, last_processed_at, reprocessed_at)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
             run_id            = VALUES(run_id),
             status            = VALUES(status),
             category          = VALUES(category),
+            brand             = COALESCE(VALUES(brand), brand),
             container_name    = VALUES(container_name),
             container_source  = VALUES(container_source),
             reprocess         = VALUES(reprocess),
@@ -512,7 +544,7 @@ def upsert_sku_result(
             last_processed_at = VALUES(last_processed_at),
             reprocessed_at    = IF(VALUES(reprocess) = 1, VALUES(last_processed_at), reprocessed_at)
     """, (
-        run_id, sku_id, status, category, container_name, container_source,
+        run_id, sku_id, status, category, brand, container_name, container_source,
         1 if reprocess else 0,
         blob_count, cloudinary_sent, cloudinary_skipped, azure_uploaded,
         json.dumps(cloudinary_urls),
@@ -882,3 +914,78 @@ def get_transformation_run_stats() -> dict:
     cur.close()
     conn.close()
     return {r["status"]: r["cnt"] for r in rows}
+
+
+# ============================================================
+# BRAND (BABY SHOP) HELPERS
+# ============================================================
+
+def get_brand_categories(brand: str) -> list[dict]:
+    """
+    Return [{category, done_count, total_count}] for a given brand.
+    Used to populate the Baby Shop tab category pills.
+    """
+    conn = _conn()
+    cur  = conn.cursor(dictionary=True)
+    cur.execute("""
+        SELECT
+            category,
+            SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done_count,
+            COUNT(*) AS total_count
+        FROM   sku_results
+        WHERE  brand = %s
+        GROUP  BY category
+        ORDER  BY category
+    """, (brand,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def get_skus_by_brand(
+    brand:    str,
+    category: Optional[str] = None,
+    status:   Optional[str] = None,
+    search:   Optional[str] = None,
+    limit:    int = 50,
+    offset:   int = 0,
+) -> tuple[list[dict], int]:
+    """
+    Fetch SKU result rows for a brand with optional filters.
+    Returns (rows, total_count).
+    """
+    conn   = _conn()
+    cur    = conn.cursor(dictionary=True)
+    where  = ["brand = %s"]
+    params: list = [brand]
+
+    if category:
+        where.append("category = %s")
+        params.append(category)
+    if status == "done":
+        where.append("status = 'done'")
+    elif status == "failed":
+        where.append("status IN ('failed', 'skipped')")
+    if search:
+        where.append("sku_id LIKE %s")
+        params.append(f"%{search}%")
+
+    where_sql = "WHERE " + " AND ".join(where)
+
+    cur.execute(f"SELECT COUNT(*) AS cnt FROM sku_results {where_sql}", params)
+    total = cur.fetchone()["cnt"]
+
+    cur.execute(
+        f"""SELECT sku_id, status, category, container_name,
+                   blob_count, azure_uploaded, listing_azure_url,
+                   error_code, last_processed_at
+            FROM   sku_results {where_sql}
+            ORDER  BY last_processed_at DESC
+            LIMIT  %s OFFSET %s""",
+        params + [limit, offset]
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows, total

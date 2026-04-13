@@ -355,6 +355,7 @@
     <button class="tab-btn" onclick="switchTab('brokenimages', this); loadBrokenImages()">🚨 Broken Images</button>
     <button class="tab-btn" onclick="switchTab('processmissing', this); loadProcessMissing()">🔄 Process Missing</button>
     <button class="tab-btn" onclick="switchTab('skuprocess', this); initSkuProcess()">📤 Process by SKU List</button>
+    <button class="tab-btn" onclick="switchTab('babyshop', this); loadBabyShopTab()">🛍 Baby Shop</button>
   </div>
 
   <!-- ══ TAB: RUNS ════════════════════════════════════════════ -->
@@ -1133,6 +1134,115 @@ FAILED_SKU_ID,,true</pre>
     </div>
 
   </div><!-- /tab-skuprocess -->
+
+  <!-- ═══════════════════════════════════════════════════════
+       BABY SHOP TAB
+       ═══════════════════════════════════════════════════════ -->
+  <div id="tab-babyshop" class="tab-panel">
+
+    <!-- ── Browse section ───────────────────────────────────── -->
+    <div id="bs-browse-section">
+      <!-- Category pills -->
+      <div id="bs-category-area" style="margin-bottom:18px;">
+        <div id="bs-category-pills" style="display:flex;flex-wrap:wrap;gap:8px;">
+          <span style="color:#94a3b8;font-size:.85rem;">Loading categories…</span>
+        </div>
+      </div>
+
+      <!-- SKU grid (hidden until category clicked) -->
+      <div id="bs-sku-section" style="display:none;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+          <button onclick="bsBackToCategories()" style="background:none;border:1px solid #e2e8f0;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:.85rem;">← Categories</button>
+          <span id="bs-category-label" style="font-weight:700;font-size:1.05rem;"></span>
+          <span id="bs-sku-count" style="color:#64748b;font-size:.85rem;"></span>
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+            <button onclick="bsSetStatus('')"       id="bs-btn-all"    class="bs-status-btn active" style="padding:5px 12px;border-radius:20px;border:1px solid #e2e8f0;cursor:pointer;font-size:.8rem;background:#fff;">All</button>
+            <button onclick="bsSetStatus('done')"   id="bs-btn-done"   class="bs-status-btn"        style="padding:5px 12px;border-radius:20px;border:1px solid #e2e8f0;cursor:pointer;font-size:.8rem;background:#fff;">✅ Passed</button>
+            <button onclick="bsSetStatus('failed')" id="bs-btn-failed" class="bs-status-btn"        style="padding:5px 12px;border-radius:20px;border:1px solid #e2e8f0;cursor:pointer;font-size:.8rem;background:#fff;">❌ Failed</button>
+            <input  id="bs-search-input" placeholder="Search SKU ID…" onkeydown="if(event.key==='Enter')bsDoSearch()" style="padding:6px 12px;border:1px solid #e2e8f0;border-radius:8px;font-size:.85rem;width:180px;">
+            <button onclick="bsDoSearch()" style="padding:6px 14px;border-radius:8px;background:#6366f1;color:#fff;border:none;cursor:pointer;font-size:.85rem;">Search</button>
+          </div>
+        </div>
+        <div id="bs-sku-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;"></div>
+        <div id="bs-pagination" style="margin-top:20px;display:flex;gap:8px;justify-content:center;"></div>
+      </div>
+    </div>
+
+    <!-- ── Process section ──────────────────────────────────── -->
+    <div style="border-top:1px solid #e2e8f0;margin-top:28px;padding-top:24px;">
+      <h3 style="margin:0 0 16px;font-size:.95rem;font-weight:700;color:#1e293b;">🛍 Process Baby Shop SKUs</h3>
+
+      <!-- Step 1: Input -->
+      <div style="margin-bottom:16px;">
+        <label style="font-size:.8rem;font-weight:600;color:#64748b;display:block;margin-bottom:6px;">STEP 1 — Paste SKU IDs (one per line) or upload a .txt / .csv file</label>
+        <textarea id="bs-sku-input" rows="6" placeholder="1000012345&#10;1000012346&#10;1000012347"
+          style="width:100%;box-sizing:border-box;padding:10px;border:1px solid #e2e8f0;border-radius:8px;font-family:monospace;font-size:.85rem;resize:vertical;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:6px;align-items:center;">
+          <input type="file" id="bs-file-input" accept=".txt,.csv" style="display:none" onchange="bsLoadFile(event)">
+          <button onclick="document.getElementById('bs-file-input').click()" style="padding:6px 14px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;cursor:pointer;font-size:.82rem;">📁 Upload File</button>
+          <button onclick="document.getElementById('bs-sku-input').value=''; _bsFetchedSkus=[];" style="padding:6px 14px;border:1px solid #fee2e2;border-radius:8px;background:#fff;color:#ef4444;cursor:pointer;font-size:.82rem;">✕ Clear</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Fetch -->
+      <div style="margin-bottom:16px;">
+        <button id="bs-fetch-btn" onclick="bsFetchSkus()"
+          style="padding:9px 22px;background:#6366f1;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-size:.9rem;">
+          🔍 Fetch from Babyshop Unbxd
+        </button>
+        <span id="bs-fetch-status" style="margin-left:12px;font-size:.85rem;color:#64748b;"></span>
+      </div>
+
+      <!-- Step 3: Preview table -->
+      <div id="bs-preview-panel" style="display:none;margin-bottom:16px;">
+        <div style="margin-bottom:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;" id="bs-pad-summary"></div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:.82rem;">
+            <thead>
+              <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">
+                <th style="padding:8px 10px;text-align:left;">#</th>
+                <th style="padding:8px 10px;text-align:left;">SKU ID</th>
+                <th style="padding:8px 10px;text-align:left;">Category</th>
+                <th style="padding:8px 10px;text-align:left;">Container</th>
+                <th style="padding:8px 10px;text-align:center;">Images</th>
+                <th style="padding:8px 10px;text-align:center;">Pad Mode</th>
+              </tr>
+            </thead>
+            <tbody id="bs-preview-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Not found -->
+        <div id="bs-notfound-panel" style="display:none;margin-top:12px;padding:12px;background:#fff7ed;border-radius:8px;border:1px solid #fed7aa;">
+          <strong style="color:#ea580c;font-size:.85rem;">⚠️ Not found in Babyshop Unbxd:</strong>
+          <div id="bs-notfound-list" style="font-size:.8rem;color:#9a3412;margin-top:6px;font-family:monospace;"></div>
+        </div>
+
+        <!-- Start -->
+        <div style="margin-top:16px;display:flex;gap:12px;align-items:center;">
+          <label style="font-size:.82rem;color:#64748b;">Workers:</label>
+          <input id="bs-workers" type="number" value="10" min="1" max="50" style="width:70px;padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:.85rem;">
+          <button id="bs-start-btn" onclick="bsStartProcessing()"
+            style="padding:9px 24px;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:.9rem;">
+            ▶ Start Processing
+          </button>
+        </div>
+      </div>
+
+      <!-- Progress panel -->
+      <div id="bs-progress-panel" style="display:none;margin-top:16px;padding:14px;background:#f0fdf4;border-radius:10px;border:1px solid #bbf7d0;">
+        <div style="font-size:.82rem;color:#15803d;margin-bottom:8px;">
+          Run ID: <code id="bs-prog-run-id"></code>
+        </div>
+        <div id="bs-prog-label" style="font-size:.85rem;font-weight:600;color:#166534;margin-bottom:10px;"></div>
+        <div style="background:#dcfce7;border-radius:9999px;height:8px;overflow:hidden;margin-bottom:8px;">
+          <div id="bs-prog-bar" style="background:#10b981;height:100%;border-radius:9999px;transition:width .5s;width:0%;"></div>
+        </div>
+        <div style="font-size:.78rem;color:#94a3b8;" id="bs-prog-text">0 / 0</div>
+      </div>
+    </div>
+
+  </div><!-- /tab-babyshop -->
 
 </div><!-- /dev-view -->
 
@@ -3007,6 +3117,274 @@ function _pollSpProgress(runId, total) {
       }
     })
     .catch(err => console.error('sp poll error:', err));
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   BABY SHOP TAB
+   ═══════════════════════════════════════════════════════════ */
+
+let _bsLoaded      = false;
+let _bsCategory    = null;
+let _bsStatus      = '';
+let _bsOffset      = 0;
+let _bsPageSize    = 50;
+let _bsFetchedSkus = [];
+let _bsPollTimer   = null;
+
+function loadBabyShopTab() {
+  if (_bsLoaded) return;
+  _bsLoaded = true;
+  bsLoadCategories();
+}
+
+function bsLoadCategories() {
+  fetch('/api/babyshop/categories')
+    .then(r => r.json())
+    .then(cats => {
+      const pills = document.getElementById('bs-category-pills');
+      if (!cats.length) {
+        pills.innerHTML = '<span style="color:#94a3b8;font-size:.85rem;">No Baby Shop SKUs processed yet.</span>';
+        return;
+      }
+      pills.innerHTML = cats.map(c => `
+        <button onclick="bsSelectCategory('${c.category}')"
+          style="padding:6px 14px;border-radius:20px;border:1px solid #e2e8f0;background:#fff;cursor:pointer;font-size:.83rem;display:inline-flex;align-items:center;gap:6px;">
+          🛍 ${c.category}
+          <span style="color:#10b981;font-weight:700;">${c.done_count}</span>
+          <span style="color:#94a3b8;">/ ${c.total_count}</span>
+        </button>
+      `).join('');
+    })
+    .catch(() => {
+      document.getElementById('bs-category-pills').innerHTML =
+        '<span style="color:#ef4444;">Failed to load categories</span>';
+    });
+}
+
+function bsSelectCategory(category) {
+  _bsCategory = category;
+  _bsOffset   = 0;
+  _bsStatus   = '';
+  document.getElementById('bs-browse-section').querySelector('#bs-category-area').style.display = 'none';
+  document.getElementById('bs-sku-section').style.display = 'block';
+  document.getElementById('bs-category-label').textContent = category;
+  document.querySelectorAll('.bs-status-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('bs-btn-all').classList.add('active');
+  document.getElementById('bs-search-input').value = '';
+  bsLoadSkus();
+}
+
+function bsBackToCategories() {
+  _bsCategory = null;
+  document.getElementById('bs-sku-section').style.display = 'none';
+  document.getElementById('bs-browse-section').querySelector('#bs-category-area').style.display = 'block';
+}
+
+function bsSetStatus(s) {
+  _bsStatus = s;
+  _bsOffset = 0;
+  document.querySelectorAll('.bs-status-btn').forEach(b => b.classList.remove('active'));
+  const map = {'': 'bs-btn-all', 'done': 'bs-btn-done', 'failed': 'bs-btn-failed'};
+  if (map[s]) document.getElementById(map[s]).classList.add('active');
+  bsLoadSkus();
+}
+
+function bsDoSearch() {
+  _bsOffset = 0;
+  bsLoadSkus();
+}
+
+function bsLoadSkus() {
+  const search = document.getElementById('bs-search-input').value.trim();
+  const params = new URLSearchParams({
+    limit: _bsPageSize,
+    offset: _bsOffset,
+  });
+  if (_bsCategory) params.set('category', _bsCategory);
+  if (_bsStatus)   params.set('status',   _bsStatus);
+  if (search)      params.set('search',   search);
+
+  document.getElementById('bs-sku-grid').innerHTML = '<span style="color:#94a3b8;font-size:.85rem;">Loading…</span>';
+
+  fetch('/api/babyshop/skus?' + params.toString())
+    .then(r => r.json())
+    .then(data => {
+      const grid = document.getElementById('bs-sku-grid');
+      document.getElementById('bs-sku-count').textContent = `${data.total} SKUs`;
+      if (!data.rows.length) {
+        grid.innerHTML = '<span style="color:#94a3b8;">No SKUs found.</span>';
+        document.getElementById('bs-pagination').innerHTML = '';
+        return;
+      }
+      grid.innerHTML = data.rows.map(s => {
+        const statusColor = s.status === 'done' ? '#10b981' : s.status === 'skipped' ? '#f59e0b' : '#ef4444';
+        const imgSrc      = s.listing_azure_url
+          ? s.listing_azure_url + '?v=1'
+          : 'https://placehold.co/200x280?text=No+Image';
+        const dt = s.last_processed_at ? s.last_processed_at.slice(0,16).replace('T',' ') : '';
+        return `
+          <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;cursor:pointer;"
+               onclick="window.open('/sku/${s.sku_id}','_blank')">
+            <img src="${imgSrc}" alt="${s.sku_id}" loading="lazy"
+              style="width:100%;aspect-ratio:3/4;object-fit:contain;background:#f8fafc;"
+              onerror="this.src='https://placehold.co/200x280?text=No+Image'">
+            <div style="padding:10px;">
+              <div style="font-weight:700;font-size:.82rem;margin-bottom:4px;">${s.sku_id}</div>
+              <div style="font-size:.75rem;color:#64748b;margin-bottom:6px;">
+                📦 ${s.blob_count || 0} images
+              </div>
+              <span style="padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;color:#fff;background:${statusColor};">${s.status}</span>
+              ${dt ? `<div style="font-size:.72rem;color:#94a3b8;margin-top:4px;">${dt}</div>` : ''}
+            </div>
+          </div>`;
+      }).join('');
+
+      // Pagination
+      const totalPages = Math.ceil(data.total / _bsPageSize);
+      const curPage    = Math.floor(_bsOffset / _bsPageSize) + 1;
+      let pagHtml = '';
+      if (totalPages > 1) {
+        if (curPage > 1)          pagHtml += `<button onclick="bsGoPage(${curPage-2})" style="padding:5px 12px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;">◀ Prev</button>`;
+        pagHtml += `<span style="padding:5px 12px;font-size:.83rem;">${curPage} / ${totalPages}</span>`;
+        if (curPage < totalPages) pagHtml += `<button onclick="bsGoPage(${curPage})"   style="padding:5px 12px;border:1px solid #e2e8f0;border-radius:6px;cursor:pointer;">Next ▶</button>`;
+      }
+      document.getElementById('bs-pagination').innerHTML = pagHtml;
+    })
+    .catch(err => {
+      document.getElementById('bs-sku-grid').innerHTML = `<span style="color:#ef4444;">Error: ${err}</span>`;
+    });
+}
+
+function bsGoPage(pageIdx) {
+  _bsOffset = pageIdx * _bsPageSize;
+  bsLoadSkus();
+}
+
+/* ── Baby Shop Process ─────────────────────── */
+
+function bsLoadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.split(/\r?\n/);
+    const ids   = lines.map(l => l.split(',')[0].trim()).filter(Boolean);
+    document.getElementById('bs-sku-input').value = ids.join('\n');
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+function bsFetchSkus() {
+  const raw  = document.getElementById('bs-sku-input').value;
+  const ids  = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const btn  = document.getElementById('bs-fetch-btn');
+  const stat = document.getElementById('bs-fetch-status');
+
+  if (!ids.length) { alert('Please paste SKU IDs first.'); return; }
+
+  btn.disabled    = true;
+  btn.textContent = '⏳ Fetching…';
+  stat.textContent = '';
+  _bsFetchedSkus  = [];
+  document.getElementById('bs-preview-panel').style.display = 'none';
+
+  fetch('/api/babyshop/fetch', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({sku_ids: ids}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert('Error: ' + data.error); return; }
+    _bsFetchedSkus = data.found || [];
+    const notFound = data.not_found || [];
+    stat.textContent = `✅ ${_bsFetchedSkus.length} found, ⚠️ ${notFound.length} not found`;
+
+    const tbody = document.getElementById('bs-preview-tbody');
+    tbody.innerHTML = _bsFetchedSkus.map((s, i) => `
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:6px 10px;color:#94a3b8;">${i+1}</td>
+        <td style="padding:6px 10px;font-family:monospace;font-size:.82rem;">${s.sku_id}</td>
+        <td style="padding:6px 10px;font-size:.82rem;">${s.category || '—'}</td>
+        <td style="padding:6px 10px;font-size:.82rem;">${s.container || '—'}</td>
+        <td style="padding:6px 10px;text-align:center;">${s.image_count || 0}</td>
+        <td style="padding:6px 10px;text-align:center;">
+          <span style="padding:2px 8px;border-radius:9999px;font-size:.75rem;font-weight:700;
+            background:${s.pad_mode==='no'?'#fef9c3':'#dcfce7'};
+            color:${s.pad_mode==='no'?'#854d0e':'#166534'};">${s.pad_mode}</span>
+        </td>
+      </tr>`).join('');
+
+    const noCount   = _bsFetchedSkus.filter(s => s.pad_mode === 'no').length;
+    const autoCount = _bsFetchedSkus.filter(s => s.pad_mode === 'auto').length;
+    document.getElementById('bs-pad-summary').innerHTML =
+      `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">auto: ${autoCount}</span>
+       <span style="background:#fef9c3;color:#854d0e;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">no-pad: ${noCount}</span>
+       <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_bsFetchedSkus.length}</span>`;
+
+    const nfPanel = document.getElementById('bs-notfound-panel');
+    if (notFound.length) {
+      nfPanel.style.display = 'block';
+      document.getElementById('bs-notfound-list').textContent = notFound.map(x => x.sku_id).join(', ');
+    } else {
+      nfPanel.style.display = 'none';
+    }
+
+    document.getElementById('bs-preview-panel').style.display = 'block';
+    document.getElementById('bs-start-btn').disabled    = _bsFetchedSkus.length === 0;
+  })
+  .catch(err => { alert('Network error: ' + err); })
+  .finally(() => {
+    btn.disabled    = false;
+    btn.textContent = '🔍 Fetch from Babyshop Unbxd';
+  });
+}
+
+function bsStartProcessing() {
+  if (!_bsFetchedSkus.length) { alert('No SKUs to process.'); return; }
+
+  const workers = parseInt(document.getElementById('bs-workers').value) || 10;
+  const btn     = document.getElementById('bs-start-btn');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Starting…';
+
+  fetch('/api/babyshop/start', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({skus: _bsFetchedSkus, workers}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert('Error: ' + data.error); btn.disabled=false; btn.textContent='▶ Start Processing'; return; }
+    const runId = data.run_id;
+    document.getElementById('bs-progress-panel').style.display = 'block';
+    document.getElementById('bs-prog-run-id').textContent  = runId.slice(0,8);
+    document.getElementById('bs-prog-label').textContent   = `Processing ${data.total} Baby Shop SKUs`;
+    btn.textContent = '⏳ Running…';
+    _bsPollTimer = setInterval(() => _pollBsProgress(runId, data.total), 3000);
+  })
+  .catch(err => { alert('Network error: ' + err); btn.disabled=false; btn.textContent='▶ Start Processing'; });
+}
+
+function _pollBsProgress(runId, total) {
+  fetch(`/api/babyshop/status/${runId}`)
+    .then(r => r.json())
+    .then(d => {
+      const done    = (d.done||0) + (d.skipped||0);
+      const failed  = d.failed || 0;
+      const pct     = total > 0 ? Math.round((done+failed)/total*100) : 0;
+      document.getElementById('bs-prog-bar').style.width  = pct + '%';
+      document.getElementById('bs-prog-text').textContent = `${done+failed} / ${total}  ✅ ${d.done||0}  ⏭ ${d.skipped||0}  ❌ ${failed}`;
+      if (d.is_complete) {
+        clearInterval(_bsPollTimer); _bsPollTimer = null;
+        document.getElementById('bs-prog-bar').style.background = '#10b981';
+        document.getElementById('bs-prog-label').textContent    = '✅ Processing Complete!';
+        document.getElementById('bs-start-btn').disabled        = false;
+        document.getElementById('bs-start-btn').textContent     = '▶ Start Processing';
+        _bsLoaded = false;  // refresh category counts on next tab click
+      }
+    })
+    .catch(err => console.error('bs poll error:', err));
 }
 
 

@@ -1,7 +1,7 @@
 """
 unbxd_client.py — Fetch product data from Unbxd search API.
 
-Used by the web UI "Process by SKU List" feature to:
+Used by the web UI "Process by SKU List" / "Baby Shop" features to:
   1. Look up each SKU in Unbxd → get gallaryImages, allCategories
   2. Derive Azure container from image URL domain
   3. Auto-detect pad mode from L2 category
@@ -17,11 +17,19 @@ from urllib.parse import urlparse
 import requests
 from requests.adapters import HTTPAdapter
 
+from config import (
+    BABYSHOP_UNBXD_API_KEY, BABYSHOP_UNBXD_SITE_KEY,
+)
+
 log = logging.getLogger("unbxd_client")
 
 UNBXD_API_KEY    = os.getenv("UNBXD_API_KEY",  "91b7857213222075bbcd3ea2dc72d026")
 UNBXD_SITE_KEY   = os.getenv("UNBXD_SITE_KEY", "ss-unbxd-aapac-prod-lifestyle-LandMark48741706891693")
 UNBXD_SEARCH_URL = f"https://search.unbxd.io/{UNBXD_API_KEY}/{UNBXD_SITE_KEY}/search"
+
+BABYSHOP_SEARCH_URL = (
+    f"https://search.unbxd.io/{BABYSHOP_UNBXD_API_KEY}/{BABYSHOP_UNBXD_SITE_KEY}/search"
+)
 
 DOMAIN_TO_CONTAINER: dict[str, str] = {
     "media-ea.landmarkshops.in": "in-media-ea",
@@ -74,12 +82,14 @@ def url_to_container(url: str) -> str:
         return "in-media"
 
 
-def _fetch_single(sku_id: str, session: requests.Session) -> dict:
+def _fetch_single(sku_id: str, session: requests.Session, search_url: str = None) -> dict:
     """
     Query Unbxd for one SKU. Returns:
-      found=True  → {sku_id, found, category, container, image_count, pad_mode}
+      found=True  → {sku_id, found, category, container, image_count, pad_mode, source_blobs}
       found=False → {sku_id, found, reason}
+    search_url defaults to Lifestyle UNBXD_SEARCH_URL; pass BABYSHOP_SEARCH_URL for Baby Shop.
     """
+    url    = search_url or UNBXD_SEARCH_URL
     params = [
         ("rows",   1),
         ("page",   1),
@@ -91,7 +101,7 @@ def _fetch_single(sku_id: str, session: requests.Session) -> dict:
     ]
     try:
         resp = session.get(
-            UNBXD_SEARCH_URL, params=params,
+            url, params=params,
             headers=UNBXD_HEADERS, timeout=15,
         )
         resp.raise_for_status()
@@ -186,5 +196,52 @@ def fetch_skus_from_unbxd(
     session.close()
 
     # Sort found by sku_id for consistent ordering
+    found.sort(key=lambda x: x["sku_id"])
+    return {"found": found, "not_found": not_found}
+
+
+def fetch_skus_from_babyshop_unbxd(
+    sku_ids: list[str],
+    workers: int = 20,
+) -> dict:
+    """
+    Fetch multiple SKUs from Babyshop Unbxd in parallel.
+    Same structure as fetch_skus_from_unbxd but uses BABYSHOP_SEARCH_URL.
+
+    Returns:
+      {
+        "found":     [{sku_id, category, container, image_count, pad_mode, source_blobs}, ...],
+        "not_found": [{sku_id, reason}, ...]
+      }
+    """
+    if not sku_ids:
+        return {"found": [], "not_found": []}
+
+    session = requests.Session()
+    adapter = HTTPAdapter(
+        pool_connections = min(workers, 20),
+        pool_maxsize     = min(workers, 20),
+    )
+    session.mount("https://", adapter)
+    session.mount("http://",  adapter)
+
+    found: list[dict]     = []
+    not_found: list[dict] = []
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {
+            ex.submit(_fetch_single, sku_id.strip(), session, BABYSHOP_SEARCH_URL): sku_id
+            for sku_id in sku_ids if sku_id.strip()
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            if result.get("found"):
+                found.append(result)
+            else:
+                not_found.append(result)
+                log.info(f"[Babyshop] SKU not found: {result['sku_id']} — {result.get('reason')}")
+
+    session.close()
+
     found.sort(key=lambda x: x["sku_id"])
     return {"found": found, "not_found": not_found}

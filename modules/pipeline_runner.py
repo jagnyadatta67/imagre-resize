@@ -18,6 +18,7 @@ from typing import Optional
 from modules import db
 from modules.azure_client import AzureClient
 from modules.converter import convert_image_bytes
+from config import BABYSHOP_SOURCE_PREFIX, BABYSHOP_TARGET_FOLDER
 
 log = logging.getLogger("pipeline_runner")
 
@@ -80,7 +81,16 @@ def process_sku(
     reprocess    = sku_entry.get("reprocess", False)
     category     = sku_entry.get("category")
     source_blobs = sku_entry.get("source_blobs")  # exact blob paths from Unbxd (optional)
+    brand        = sku_entry.get("brand")          # "babyshop" or None (Lifestyle)
     sku_log      = logging.getLogger(f"sku.{sku_id}")
+
+    # ── Brand-based path routing ──────────────────────────────────────────────
+    if brand == "babyshop":
+        source_prefix = BABYSHOP_SOURCE_PREFIX   # "babyshopstores/"
+        target_folder = BABYSHOP_TARGET_FOLDER   # "babyshopstores-new"
+    else:
+        source_prefix = None   # uses SOURCE_BLOB_PREFIX default from config
+        target_folder = None   # uses TARGET_CONTAINER default from config
 
     # Skip if already done and not forced reprocess
     existing = db.get_sku_status(sku_id)
@@ -107,7 +117,7 @@ def process_sku(
         sku_log.info(f"Using {len(blobs)} exact blob(s) from Unbxd gallery")
     else:
         try:
-            blobs = azure.list_sku_blobs(container_name, sku_id)
+            blobs = azure.list_sku_blobs(container_name, sku_id, prefix=source_prefix)
         except Exception as exc:
             sku_log.error(f"list_blobs error: {exc}")
             db.upsert_sku_result(
@@ -154,7 +164,7 @@ def process_sku(
             output_bytes, used_cloudinary, cloudinary_url, vision_data, transform_data = \
                 convert_image_bytes(image_bytes, filename, sku_id, sku_log, pad_mode=pad_mode)
 
-            azure_url = azure.upload_to_newc(filename, output_bytes, container_name)
+            azure_url = azure.upload_to_newc(filename, output_bytes, container_name, target_folder=target_folder)
 
             if used_cloudinary:
                 cloudinary_sent += 1
@@ -204,6 +214,7 @@ def process_sku(
         len(blobs), cloudinary_sent, cloudinary_skipped, azure_uploaded,
         cloudinary_urls, azure_urls,
         category=category,
+        brand=brand,
     )
     sku_log.info(
         f"=== DONE  {sku_id}  "
@@ -261,7 +272,8 @@ def worker_loop(
             "container":     task["container"],
             "reprocess":     bool(task["reprocess"]),
             "category":      task.get("category"),
-            "source_blobs":  raw_blobs,   # exact paths or None
+            "source_blobs":  raw_blobs,          # exact paths or None
+            "brand":         task.get("brand"),  # "babyshop" or None
         }
 
         status = "failed"

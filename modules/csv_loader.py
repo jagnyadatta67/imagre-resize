@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 _SKU_COL_CANDIDATES = ["sku_id", "SKU_ID", "sku", "SKU", "product_id", "PRODUCT_ID"]
 _CONTAINER_COL      = "container"
 _REPROCESS_COL      = "reprocess"
+_BRAND_COL          = "brand"
 _TRUE_VALUES        = {"true", "1", "yes"}
 
 
@@ -53,7 +54,7 @@ def load_csvs_from_folder(folder_path: str) -> tuple[list[dict], list[str]]:
         category = csv_path.stem.lower()   # men.csv → "men"
         for row in _read_single_csv(csv_path):
             sku_id   = row["sku_id"]
-            existing = merged.get(sku_id, {"container": None, "reprocess": False, "category": category})
+            existing = merged.get(sku_id, {"container": None, "reprocess": False, "category": category, "brand": None})
             merged[sku_id] = {
                 "sku_id":    sku_id,
                 # last non-empty container hint wins
@@ -62,6 +63,8 @@ def load_csvs_from_folder(folder_path: str) -> tuple[list[dict], list[str]]:
                 "reprocess": row["reprocess"] or existing["reprocess"],
                 # first file wins for category
                 "category":  existing.get("category") or category,
+                # last non-empty brand wins
+                "brand":     row.get("brand") or existing.get("brand"),
             }
 
     sku_list = list(merged.values())
@@ -89,6 +92,7 @@ def _read_single_csv(csv_path: Path) -> list[dict]:
 
         has_container = _CONTAINER_COL in fieldnames
         has_reprocess = _REPROCESS_COL in fieldnames
+        has_brand     = _BRAND_COL in fieldnames
 
         for row in reader:
             sku_id = (row.get(sku_col) or "").strip()
@@ -97,11 +101,13 @@ def _read_single_csv(csv_path: Path) -> list[dict]:
 
             container_val = (row.get(_CONTAINER_COL) or "").strip() if has_container else ""
             reprocess_val = (row.get(_REPROCESS_COL) or "").strip().lower() if has_reprocess else ""
+            brand_val     = (row.get(_BRAND_COL) or "").strip().lower() if has_brand else ""
 
             rows.append({
                 "sku_id":    sku_id,
                 "container": container_val or None,
                 "reprocess": reprocess_val in _TRUE_VALUES,
+                "brand":     brand_val or None,
             })
 
     log.info(f"  {csv_path.name}: {len(rows)} row(s)")

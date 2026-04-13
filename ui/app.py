@@ -951,6 +951,147 @@ def api_broken_image_categories():
     return jsonify(rows)
 
 
+# ============================================================
+# BABY SHOP ROUTES
+# ============================================================
+
+@app.route("/api/babyshop/categories")
+def api_babyshop_categories():
+    """Return Baby Shop categories with done/total counts."""
+    try:
+        rows = pipeline_db.get_brand_categories("babyshop")
+        for r in rows:
+            if r.get("done_count") is not None:
+                r["done_count"] = int(r["done_count"])
+            if r.get("total_count") is not None:
+                r["total_count"] = int(r["total_count"])
+        return jsonify(rows)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/babyshop/skus")
+def api_babyshop_skus():
+    """
+    Paginated SKU list for Baby Shop browse.
+    Query params: category, status (done|failed), search, limit, offset
+    """
+    category = request.args.get("category", "").strip() or None
+    status   = request.args.get("status",   "").strip() or None
+    search   = request.args.get("search",   "").strip() or None
+    limit    = min(int(request.args.get("limit",  "50")), 200)
+    offset   = int(request.args.get("offset", "0"))
+
+    try:
+        rows, total = pipeline_db.get_skus_by_brand(
+            "babyshop", category=category, status=status,
+            search=search, limit=limit, offset=offset,
+        )
+        for r in rows:
+            if r.get("last_processed_at"):
+                r["last_processed_at"] = r["last_processed_at"].strftime("%Y-%m-%d %H:%M:%S")
+        return jsonify({"total": total, "rows": rows})
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/babyshop/fetch", methods=["POST"])
+def api_babyshop_fetch():
+    """
+    Fetch Baby Shop SKU metadata from Babyshop Unbxd.
+    Body: {sku_ids: ["id1", "id2", ...]}
+    """
+    if not _current_user():
+        return jsonify({"error": "Login required"}), 401
+
+    data    = request.get_json() or {}
+    raw_ids = data.get("sku_ids") or []
+    sku_ids = [s.strip() for s in raw_ids if str(s).strip()]
+
+    if not sku_ids:
+        return jsonify({"error": "No SKU IDs provided"}), 400
+    if len(sku_ids) > 1000:
+        return jsonify({"error": "Max 1000 SKUs per batch"}), 400
+
+    from modules.unbxd_client import fetch_skus_from_babyshop_unbxd
+    result = fetch_skus_from_babyshop_unbxd(sku_ids, workers=20)
+    return jsonify(result)
+
+
+@app.route("/api/babyshop/start", methods=["POST"])
+def api_babyshop_start():
+    """
+    Start Baby Shop pipeline for a confirmed SKU list (after Unbxd fetch preview).
+    Body: {skus: [{sku_id, container, category, pad_mode, source_blobs}, ...], workers}
+    brand="babyshop" is injected server-side; reprocess=False always.
+    """
+    if not _current_user():
+        return jsonify({"error": "Login required"}), 401
+
+    data    = request.get_json() or {}
+    skus    = data.get("skus", [])
+    workers = max(1, min(int(data.get("workers", 10)), 50))
+
+    if not skus:
+        return jsonify({"error": "No SKUs provided"}), 400
+
+    from config import BABYSHOP_TARGET_FOLDER
+    sku_list = [
+        {
+            "sku_id":       s["sku_id"],
+            "container":    s.get("container", ""),
+            "category":     s.get("category", ""),
+            "pad_mode":     s.get("pad_mode", "auto"),
+            "reprocess":    False,   # no reprocess for Baby Shop
+            "source_blobs": s.get("source_blobs"),
+            "brand":        "babyshop",
+        }
+        for s in skus
+    ]
+
+    import uuid as _uuid
+    run_id = str(_uuid.uuid4())
+
+    with _active_pipeline_lock:
+        _active_pipeline_runs[run_id] = {
+            "category":   "babyshop",
+            "pad_mode":   "mixed (auto-detected)",
+            "workers":    workers,
+            "total":      len(sku_list),
+            "started_at": datetime.now().isoformat(),
+            "status":     "running",
+        }
+
+    def _bg_run():
+        try:
+            _run_pipeline(
+                sku_list = sku_list,
+                run_id   = run_id,
+                pad_mode = "auto",
+                workers  = workers,
+                source   = "web/babyshop",
+            )
+        except Exception as exc:
+            import logging as _lg
+            _lg.getLogger("web.babyshop").error(f"Baby Shop pipeline error: {exc}")
+        finally:
+            with _active_pipeline_lock:
+                if run_id in _active_pipeline_runs:
+                    _active_pipeline_runs[run_id]["status"] = "done"
+
+    import threading as _threading
+    t = _threading.Thread(target=_bg_run, name=f"babyshop-{run_id[:8]}", daemon=True)
+    t.start()
+
+    return jsonify({"run_id": run_id, "total": len(sku_list)})
+
+
+@app.route("/api/babyshop/status/<run_id>")
+def api_babyshop_status(run_id: str):
+    """Poll Baby Shop pipeline progress — reuses same logic as process-missing status."""
+    return api_process_missing_status(run_id)
+
+
 @app.route("/api/run/<run_id>/skus")
 def api_run_skus(run_id: str):
     """

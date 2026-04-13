@@ -53,3 +53,9 @@ DOMAIN_TO_CONTAINER = {
     "media-us.landmarkshops.in": "in-media-us",
     "media-uk.landmarkshops.in": "in-media-uk",
 }
+
+# ── Baby Shop brand settings ───────────────────────────────────
+BABYSHOP_UNBXD_API_KEY  = os.getenv("BABYSHOP_UNBXD_API_KEY",  "04c81a1a0317cf9ec15eeb77ae6dcb43")
+BABYSHOP_UNBXD_SITE_KEY = os.getenv("BABYSHOP_UNBXD_SITE_KEY", "ss-unbxd-aapac-prod-babyshop-LandMark48741720534433")
+BABYSHOP_SOURCE_PREFIX  = os.getenv("BABYSHOP_SOURCE_PREFIX",  "babyshopstores/")
+BABYSHOP_TARGET_FOLDER  = os.getenv("BABYSHOP_TARGET_FOLDER",  "babyshopstores-new")
