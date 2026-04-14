@@ -3225,7 +3225,7 @@ function bsLoadSkus() {
         const dt = s.last_processed_at ? s.last_processed_at.slice(0,16).replace('T',' ') : '';
         return `
           <div style="background:#fff;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden;cursor:pointer;"
-               onclick="window.open('/sku/${s.sku_id}','_blank')">
+               onclick="window.open('/?bq=${s.sku_id}','_blank')">
             <img src="${imgSrc}" alt="${s.sku_id}" loading="lazy"
               style="width:100%;aspect-ratio:3/4;object-fit:contain;background:#f8fafc;"
               onerror="this.src='https://placehold.co/200x280?text=No+Image'">

@@ -129,12 +129,12 @@ def process_sku(
             return "failed"
 
         if not blobs:
-            sku_log.warning(f"No blobs found — container={container_name}  prefix=lifestyle/{sku_id}")
+            sku_log.warning(f"No blobs found — container={container_name}  prefix={source_prefix}{sku_id}")
             db.upsert_sku_result(
                 run_id, sku_id, "failed", container_name, container_source,
                 reprocess, 0, 0, 0, 0, [], [],
                 error_code="NO_BLOBS",
-                error_msg=f"No blobs in {container_name} for prefix lifestyle/{sku_id}",
+                error_msg=f"No blobs in {container_name} for prefix {source_prefix}{sku_id}",
                 category=category,
             )
             return "failed"

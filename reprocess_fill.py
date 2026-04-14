@@ -44,6 +44,8 @@ from tqdm import tqdm
 from config import (
     CLOUDINARY_CLOUD, CLOUDINARY_KEY, CLOUDINARY_SECRET,
     TARGET_W, TARGET_H, BULK_WORKERS,
+    SOURCE_BLOB_PREFIX,
+    BABYSHOP_SOURCE_PREFIX, BABYSHOP_TARGET_FOLDER,
 )
 from modules import db
 from modules.db import update_reprocess_transform
@@ -138,7 +140,10 @@ def process_one(
         return "failed"
 
     container = existing["container_name"]
-    blob_name = f"lifestyle/{filename}"
+    brand     = (existing.get("brand") or "").strip().lower()
+    src_prefix = BABYSHOP_SOURCE_PREFIX if brand == "babyshop" else SOURCE_BLOB_PREFIX
+    target_folder = BABYSHOP_TARGET_FOLDER if brand == "babyshop" else None
+    blob_name = f"{src_prefix}{filename}"
 
     # ── 2. Download original from Azure ──────────────────────
     try:
@@ -179,7 +184,7 @@ def process_one(
 
     # ── 4. Upload result back to Azure ────────────────────────
     try:
-        azure_url = azure.upload_to_newc(filename, output_bytes, container)
+        azure_url = azure.upload_to_newc(filename, output_bytes, container, target_folder=target_folder)
         img_log.info(f"Azure upload  {filename}  → {azure_url}")
     except Exception as exc:
         img_log.error(f"Azure upload failed  {filename}: {exc}")

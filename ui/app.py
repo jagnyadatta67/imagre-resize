@@ -886,7 +886,7 @@ def api_process_missing_start():
                 run_id   = run_id,
                 pad_mode = pad_mode,
                 workers  = workers,
-                source   = f"web/{category or 'all'}",
+                source   = f"web/{cat_label}",
             )
             # Mark done/reset failed back to pending
             pipeline_db.mark_transformations_done_by_run(run_id)
@@ -1814,7 +1814,7 @@ def api_reprocess_image():
                          status, error_code, error_msg, processed_at, uploaded_by)
                     VALUES (%s, %s, %s, %s, %s, 'failed', %s, %s, %s, %s)
                 """, (
-                    "manual-reprocess", sku_id, f"lifestyle/{filename}", filename,
+                    "manual-reprocess", sku_id, blob_name, filename,
                     f"reprocess_{method}", type(exc).__name__, str(exc)[:2000],
                     datetime.now(), _current_user(),
                 ))
@@ -1861,7 +1861,7 @@ def api_upload_image():
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
-        cur.execute("SELECT container_name FROM sku_results WHERE sku_id = %s", (sku_id,))
+        cur.execute("SELECT container_name, brand FROM sku_results WHERE sku_id = %s", (sku_id,))
         row = cur.fetchone()
     finally:
         cur.close()
@@ -1871,10 +1871,12 @@ def api_upload_image():
         return jsonify({"ok": False, "error": f"No DB record for SKU '{sku_id}'"}), 404
 
     container_name = row["container_name"]
+    _brand         = row.get("brand") or ""
+    _target_folder = BABYSHOP_TARGET_FOLDER if _brand == "babyshop" else None
 
     try:
         image_bytes = file.read()
-        azure_url   = _azure.upload_to_newc(filename, image_bytes, container_name)
+        azure_url   = _azure.upload_to_newc(filename, image_bytes, container_name, target_folder=_target_folder)
 
         db2  = get_db()
         cur2 = db2.cursor(dictionary=True)
@@ -1885,13 +1887,14 @@ def api_upload_image():
             """, (sku_id,))
             reprocess_count = (cur2.fetchone()["max_count"] or 0) + 1
 
+            _dest_folder = BABYSHOP_TARGET_FOLDER if _brand == "babyshop" else TARGET_CONTAINER
             cur2.execute("""
                 INSERT INTO image_results
                     (run_id, sku_id, blob_name, filename, method,
                      azure_url, status, processed_at, reprocess_count, uploaded_by)
                 VALUES (%s, %s, %s, %s, 'manual_upload', %s, 'done', %s, %s, %s)
             """, (
-                "manual-upload", sku_id, f"{TARGET_CONTAINER}/{filename}",
+                "manual-upload", sku_id, f"{_dest_folder}/{filename}",
                 filename, azure_url, datetime.now(), reprocess_count, uploaded_by,
             ))
             cur2.execute("""
@@ -1952,11 +1955,13 @@ def api_bulk_upload_images():
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
-        cur.execute("SELECT container_name FROM sku_results WHERE sku_id = %s LIMIT 1", (sku_id,))
+        cur.execute("SELECT container_name, brand FROM sku_results WHERE sku_id = %s LIMIT 1", (sku_id,))
         row = cur.fetchone()
         if not row or not row.get("container_name"):
             return jsonify({"ok": False, "error": f"SKU '{sku_id}' not found"}), 404
-        container = row["container_name"]
+        container      = row["container_name"]
+        _bulk_brand    = row.get("brand") or ""
+        _bulk_target   = BABYSHOP_TARGET_FOLDER if _bulk_brand == "babyshop" else None
 
         cur.execute("""
             SELECT DISTINCT filename FROM image_results
@@ -1982,7 +1987,7 @@ def api_bulk_upload_images():
 
         try:
             image_bytes = f.read()
-            azure_url   = _azure.upload_to_newc(fname, image_bytes, container)
+            azure_url   = _azure.upload_to_newc(fname, image_bytes, container, target_folder=_bulk_target)
 
             # Update image_results row for this filename
             db2  = get_db()
