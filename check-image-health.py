@@ -374,9 +374,12 @@ def main() -> None:
     # Ensure DB tables exist (safe to run every time — all CREATE IF NOT EXISTS)
     pipeline_db.init_db()
 
-    # Truncate health tables so every run reflects fresh CDN state
+    # Truncate health tables + clear checkpoint so every run is fully fresh
     log.info("Truncating broken_image_health and sku_needs_transformation for fresh run...")
     pipeline_db.truncate_health_tables()
+    if CHECKPOINT_FILE.exists():
+        CHECKPOINT_FILE.unlink()
+        log.info("Cleared checkpoint file — all products will be rechecked.")
 
     log.info("=" * 60)
     log.info("check-image-health  (Unbxd → CDN HEAD check)")

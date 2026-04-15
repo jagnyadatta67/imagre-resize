@@ -79,6 +79,8 @@ def main() -> None:
         help="Cloudinary bg mode: auto|white|gen_fill=pad with bg, no=crop=fill (default: auto)")
     parser.add_argument("--dry-run", action="store_true",
         help="Detect containers + list blobs only — no conversion or upload")
+    parser.add_argument("--reprocess", action="store_true",
+        help="Reprocess all SKUs even if already done (global override)")
     args = parser.parse_args()
 
     db.init_db()
@@ -96,6 +98,7 @@ def main() -> None:
     print(f"  Workers   : {args.workers}")
     print(f"  Pad mode  : {args.pad_mode}")
     print(f"  Dry run   : {args.dry_run}")
+    print(f"  Reprocess : {args.reprocess}")
     print(f"  Started   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*65}\n")
 
@@ -107,13 +110,15 @@ def main() -> None:
     )
 
     counts = run_pipeline(
-        sku_list   = sku_list,
-        run_id     = run_id,
-        pad_mode   = args.pad_mode,
-        workers    = args.workers,
-        dry_run    = args.dry_run,
-        source     = args.csv_folder,
-        pbar       = pbar,
+        sku_list        = sku_list,
+        run_id          = run_id,
+        pad_mode        = args.pad_mode,
+        workers         = args.workers,
+        dry_run         = args.dry_run,
+        source          = args.csv_folder,
+        pbar            = pbar,
+        force_pad_mode  = True,
+        force_reprocess = args.reprocess,
     )
 
     queue_stats = db.get_queue_stats(run_id)

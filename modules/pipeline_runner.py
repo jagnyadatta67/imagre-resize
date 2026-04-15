@@ -63,13 +63,14 @@ class StopSignal(Exception):
 # ============================================================
 
 def process_sku(
-    sku_entry:  dict,
-    run_id:     str,
-    azure:      AzureClient,
-    pad_mode:   str,
-    stop_lock:  Lock,
-    stop_flag:  list,
-    dry_run:    bool,
+    sku_entry:       dict,
+    run_id:          str,
+    azure:           AzureClient,
+    pad_mode:        str,
+    stop_lock:       Lock,
+    stop_flag:       list,
+    dry_run:         bool,
+    force_reprocess: bool = False,
 ) -> str:
     """
     Full pipeline for one SKU.
@@ -94,7 +95,7 @@ def process_sku(
 
     # Skip if already done and not forced reprocess
     existing = db.get_sku_status(sku_id)
-    if existing and existing["status"] in ("done", "skipped") and not reprocess:
+    if existing and existing["status"] in ("done", "skipped") and not reprocess and not force_reprocess:
         sku_log.info(f"SKIP {sku_id}  (already done)")
         db.mark_skipped(run_id, sku_id, category=category)
         return "skipped"
@@ -139,6 +140,8 @@ def process_sku(
             )
             return "failed"
 
+    # Deduplicate blobs (Unbxd gallery may return duplicate URLs)
+    blobs = list(dict.fromkeys(blobs))
     sku_log.info(f"Found {len(blobs)} blob(s)")
 
     if dry_run:
@@ -237,15 +240,17 @@ def _postfix(counts: dict) -> dict:
 
 
 def worker_loop(
-    run_id:      str,
-    azure:       AzureClient,
-    pad_mode:    str,
-    stop_flag:   list,
-    stop_lock:   Lock,
-    dry_run:     bool,
-    counts:      dict,
-    counts_lock: Lock,
-    pbar=None,           # optional tqdm bar — None for web context
+    run_id:          str,
+    azure:           AzureClient,
+    pad_mode:        str,
+    stop_flag:       list,
+    stop_lock:       Lock,
+    dry_run:         bool,
+    counts:          dict,
+    counts_lock:     Lock,
+    pbar=None,               # optional tqdm bar — None for web context
+    force_pad_mode:  bool = False,  # True = CLI pad_mode overrides per-task stored value
+    force_reprocess: bool = False,  # True = skip "already done" check for all SKUs
 ) -> None:
     worker_id = threading.current_thread().name
 
@@ -255,8 +260,12 @@ def worker_loop(
             break
 
         queue_id  = task["id"]
-        # Task-level pad_mode overrides run-level pad_mode
-        task_pad_mode = task.get("pad_mode") or pad_mode
+        # CLI --pad-mode always wins when force_pad_mode=True (run.py)
+        # Otherwise task-level pad_mode wins (UI / web flow)
+        if force_pad_mode:
+            task_pad_mode = pad_mode
+        else:
+            task_pad_mode = task.get("pad_mode") or pad_mode
 
         # Parse source_blobs JSON if present (exact blob paths from Unbxd)
         raw_blobs = task.get("source_blobs")
@@ -283,6 +292,7 @@ def worker_loop(
             status = process_sku(
                 sku_entry, run_id, azure,
                 task_pad_mode, stop_lock, stop_flag, dry_run,
+                force_reprocess=force_reprocess,
             )
         except StopSignal as exc:
             error  = str(exc)
@@ -314,13 +324,15 @@ def worker_loop(
 # ============================================================
 
 def run_pipeline(
-    sku_list:   list[dict],
-    run_id:     str,
-    pad_mode:   str  = "auto",
-    workers:    int  = 10,
-    dry_run:    bool = False,
-    source:     str  = "web-trigger",   # shown in sku_runs.csv_folder
-    pbar=None,                           # optional tqdm — pass from CLI, None for web
+    sku_list:        list[dict],
+    run_id:          str,
+    pad_mode:        str  = "auto",
+    workers:         int  = 10,
+    dry_run:         bool = False,
+    source:          str  = "web-trigger",   # shown in sku_runs.csv_folder
+    pbar=None,                               # optional tqdm — pass from CLI, None for web
+    force_pad_mode:  bool = False,           # True = CLI pad_mode overrides per-task stored value
+    force_reprocess: bool = False,           # True = skip "already done" check for all SKUs
 ) -> dict:
     """
     Core pipeline entry point. Callable from CLI and web.
@@ -360,6 +372,8 @@ def run_pipeline(
                     stop_flag, stop_lock,
                     dry_run,
                     counts, counts_lock, pbar,
+                    force_pad_mode,
+                    force_reprocess,
                 )
                 for _ in range(n_workers)
             ]
