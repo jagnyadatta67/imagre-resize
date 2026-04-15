@@ -1093,6 +1093,14 @@ FAILED_SKU_ID,,true</pre>
                    style="width:60px; border:1px solid #e2e8f0; border-radius:7px; padding:5px 8px; font-size:.82rem; outline:none;"
                    onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#e2e8f0'"/>
           </div>
+          <!-- Force Retry toggle -->
+          <label style="display:flex; align-items:center; gap:6px; cursor:pointer;
+                         background:#fff3cd; border:1px solid #ffc107; border-radius:8px;
+                         padding:6px 12px; font-size:.78rem; font-weight:600; color:#856404; user-select:none;">
+            <input type="checkbox" id="sp-force-retry"
+                   style="width:15px; height:15px; cursor:pointer; accent-color:#f59e0b;"/>
+            🔁 Force Retry (reprocess even if already done)
+          </label>
           <button id="sp-start-btn" onclick="startSpProcessing()"
                   style="padding:8px 22px; border-radius:9px; background:#10b981; color:#fff;
                          border:none; font-size:.85rem; font-weight:700; cursor:pointer; transition:background .15s;">
@@ -3082,8 +3090,9 @@ function fetchSpSkus() {
 function startSpProcessing() {
   if (!_spFetchedSkus.length) { alert('No SKUs to process.'); return; }
 
-  const workers = parseInt(document.getElementById('sp-workers').value) || 10;
-  const btn     = document.getElementById('sp-start-btn');
+  const workers     = parseInt(document.getElementById('sp-workers').value) || 10;
+  const forceRetry  = document.getElementById('sp-force-retry').checked;
+  const btn         = document.getElementById('sp-start-btn');
 
   btn.disabled    = true;
   btn.textContent = '⏳ Starting…';
@@ -3091,7 +3100,7 @@ function startSpProcessing() {
   fetch('/api/process-skuids/start', {
     method:  'POST',
     headers: {'Content-Type': 'application/json'},
-    body:    JSON.stringify({skus: _spFetchedSkus, workers}),
+    body:    JSON.stringify({skus: _spFetchedSkus, workers, force_retry: forceRetry}),
   })
   .then(r => r.json())
   .then(data => {

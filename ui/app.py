@@ -767,9 +767,10 @@ def api_process_skuids_start():
     if not _current_user():
         return jsonify({"error": "Login required"}), 401
 
-    data    = request.get_json() or {}
-    skus    = data.get("skus", [])
-    workers = max(1, min(int(data.get("workers", 10)), 50))
+    data         = request.get_json() or {}
+    skus         = data.get("skus", [])
+    workers      = max(1, min(int(data.get("workers", 10)), 50))
+    force_retry  = bool(data.get("force_retry", False))
 
     if not skus:
         return jsonify({"error": "No SKUs provided"}), 400
@@ -780,8 +781,8 @@ def api_process_skuids_start():
             "container":    s.get("container", ""),
             "category":     s.get("category", ""),
             "pad_mode":     s.get("pad_mode", "auto"),
-            "reprocess":    False,
-            "source_blobs": s.get("source_blobs"),  # exact blob paths from Unbxd
+            "reprocess":    force_retry,               # True = skip done-check, overwrite
+            "source_blobs": s.get("source_blobs"),     # exact blob paths from Unbxd
         }
         for s in skus
     ]

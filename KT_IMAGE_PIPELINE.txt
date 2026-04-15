@@ -1,0 +1,308 @@
+================================================================================
+       LIFESTYLE IMAGE TRANSFORMATION PIPELINE — KNOWLEDGE TRANSFER DOCUMENT
+================================================================================
+Tool     : SquareShift AI Image Transformer
+Purpose  : Detect broken product images → reprocess → re-upload to Azure CDN
+Prepared : April 2026
+================================================================================
+
+
+--------------------------------------------------------------------------------
+SECTION 1 — SERVER ACCESS
+--------------------------------------------------------------------------------
+
+Step 1: SSH into Jump Server
+  ssh jagnya@10.126.1.132
+
+Step 2: SSH into Image Resize Server
+  ssh lmsone@10.126.32.10
+
+Step 3: Go to the project folder
+  cd image-resize/
+
+
+--------------------------------------------------------------------------------
+SECTION 2 — WEB UI ACCESS
+--------------------------------------------------------------------------------
+
+URL    : https://image.landmarkshops.in/?dev=1
+Login  : Use your assigned username and password
+
+The UI has the following tabs:
+  - Business View  : Browse processed product images by category
+  - SKU List       : Process a list of SKUs manually
+  - Baby Shop      : Browse and process Baby Shop products separately
+  - Dev Dashboard  : View run history, failed SKUs, pipeline status
+
+
+--------------------------------------------------------------------------------
+SECTION 3 — FULL WORKFLOW (STEP BY STEP)
+--------------------------------------------------------------------------------
+
+STEP 1 — RUN IMAGE HEALTH CHECK
+---------------------------------
+This script scans all processed images on the CDN and detects broken ones.
+It writes results into two MySQL tables:
+  - broken_image_health       : Every broken image URL
+  - sku_needs_transformation  : SKUs whose first (hero) image is broken
+
+Command:
+  nohup python3 check-image-health.py --use-new --pages 0 --no-resume --workers 80 > image_health/run.log 2>&1 &
+
+  --use-new     : Scan the new processed images (lifestyle-new CDN)
+  --pages 0     : Scan all pages (no limit)
+  --no-resume   : Start fresh, don't continue previous run
+  --workers 80  : Run 80 parallel workers (faster scanning)
+
+Monitor progress (live log):
+  tail -100f image_health/run.log
+
+Wait until you see "COMPLETE" or "Done" at the end of the log.
+
+
+STEP 2 — CHECK DATABASE TABLES
+---------------------------------
+Connect to the imageresize database. Tables you need:
+
+  broken_image_health
+  ----------------------
+  Stores every broken image found during health check.
+  Columns: sku_id, broken_url, image_position, category, checked_at
+
+  sku_needs_transformation
+  -------------------------
+  Stores one row per SKU whose hero image (position 1) is broken.
+  Columns: sku_id, category, container, broken_url, status, checked_at
+
+  sku_results
+  ------------
+  Master table of all processed SKUs — status, container, brand, etc.
+
+  image_results
+  --------------
+  Per-image audit trail — cloudinary URL, azure URL, transform used.
+
+  sku_queue
+  ----------
+  Worker task queue — used during active processing runs.
+
+
+STEP 3 — GET THE LIST OF BROKEN SKUs
+---------------------------------------
+Run this query to get all SKUs that need reprocessing:
+
+  SELECT sku_id FROM sku_needs_transformation;
+
+For more detail:
+  SELECT sku_id, category, container, status, broken_url, checked_at
+  FROM sku_needs_transformation
+  WHERE status = 'pending'
+  ORDER BY checked_at DESC;
+
+To get broken images with their source URL:
+  SELECT
+      sku_id,
+      broken_url,
+      REPLACE(broken_url, 'lifestyle-new', 'lifestyle') AS source_url,
+      image_position,
+      category
+  FROM broken_image_health
+  ORDER BY checked_at DESC;
+
+Copy the sku_id list from the query result.
+
+
+STEP 4 — REPROCESS VIA WEB UI
+--------------------------------
+1. Open https://image.landmarkshops.in/?dev=1
+2. Click the "SKU List" tab
+3. Paste the SKU IDs (one per line) into the text box
+4. Click "Fetch from Unbxd"
+   - This will look up container, image count and pad mode for each SKU
+   - You will see: X found, Y not found
+5. Review the table (SKU ID, Category, Container, Images, Pad Mode)
+6. Set Workers (default 10, increase for large batches e.g. 20-30)
+7. Click "Start Processing"
+8. Watch the progress bar — shows Done / Failed / Running counts
+9. Wait for "Processing Complete"
+
+Note:
+  - SKUs already done will be skipped automatically
+  - Failed SKUs can be retried by running again with the same list
+  - Pad Mode is auto-detected:
+      men / women / kids         → no  (crop:fill)
+      beauty / bags / footwear
+      accessories / watches      → auto (pad with white background)
+
+
+STEP 5 — VERIFY RESULTS
+--------------------------
+After processing, search any SKU on the business view:
+  https://image.landmarkshops.in/?bq=YOUR_SKU_ID
+
+You will see:
+  - Original button  : Source image from Azure (before transform)
+  - Processed button : Transformed image (1450x2100px)
+
+Check that all images load correctly with no broken thumbnails.
+
+
+--------------------------------------------------------------------------------
+SECTION 4 — USEFUL SQL QUERIES
+--------------------------------------------------------------------------------
+
+-- Count broken SKUs by category
+SELECT category, COUNT(*) AS broken_skus
+FROM sku_needs_transformation
+WHERE status = 'pending'
+GROUP BY category
+ORDER BY broken_skus DESC;
+
+-- Check processing result for a specific SKU
+SELECT sku_id, status, error_code, error_msg, brand, last_processed_at
+FROM sku_results
+WHERE sku_id LIKE '%YOUR_SKU_ID%';
+
+-- See all images for a SKU
+SELECT filename, azure_url, cloudinary_url, status
+FROM image_results
+WHERE sku_id = 'YOUR_SKU_ID'
+ORDER BY processed_at DESC;
+
+-- Check recently failed SKUs
+SELECT sku_id, error_code, error_msg, last_processed_at
+FROM sku_results
+WHERE status = 'failed'
+ORDER BY last_processed_at DESC
+LIMIT 50;
+
+-- Check run history
+SELECT run_id, total_skus, done_count, failed_count, status, started_at, finished_at
+FROM sku_runs
+ORDER BY started_at DESC
+LIMIT 10;
+
+
+--------------------------------------------------------------------------------
+SECTION 5 — LOGS
+--------------------------------------------------------------------------------
+
+Health check log:
+  tail -100f /home/lmsone/image-resize/image_health/run.log
+
+UI / Flask server log:
+  tail -100f /home/lmsone/image-resize/logs/ui.log
+
+Pipeline processing log:
+  tail -100f /home/lmsone/image-resize/logs/pipeline.log
+
+
+--------------------------------------------------------------------------------
+SECTION 6 — RESTART THE SERVER
+--------------------------------------------------------------------------------
+
+Kill existing server:
+  pkill -f "ui/app.py"
+
+Start server:
+  cd /home/lmsone/image-resize
+  nohup python3 ui/app.py > logs/ui.log 2>&1 &
+
+Verify it is running:
+  ps aux | grep "ui/app.py"
+
+
+--------------------------------------------------------------------------------
+SECTION 7 — BABY SHOP WORKFLOW
+--------------------------------------------------------------------------------
+
+Baby Shop products are processed separately from Lifestyle.
+
+1. Click the "Baby Shop" tab in the UI
+2. Browse by category or paste SKU IDs
+3. Fetch from Babyshop Unbxd (separate API)
+4. Start Processing
+
+Baby Shop images:
+  Source  : babyshopstores/ prefix in Azure
+  Output  : babyshopstores-new/ folder in Azure
+
+To view Baby Shop products:
+  https://image.landmarkshops.in/BabyShop
+
+
+--------------------------------------------------------------------------------
+SECTION 8 — COMMON ERRORS AND FIXES
+--------------------------------------------------------------------------------
+
+ERROR: AuthorizationRequired: cloud_name is disabled
+  Cause : CLOUDINARY_CLOUD_NAME not set correctly in .env
+  Fix   : Edit /home/lmsone/image-resize/.env
+          Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+          Then restart the server.
+
+ERROR: BlobNotFound / The specified blob does not exist
+  Cause : Source image not in Azure at expected path, or wrong container
+  Fix   : Check container in sku_results. Verify image exists in Azure.
+          Re-fetch from Unbxd to get correct container and blob paths.
+
+ERROR: Failed to parse: .blob.core.windows.net
+  Cause : AZURE_ACCOUNT_NAME is empty in .env
+  Fix   : Edit .env and set AZURE_ACCOUNT_NAME correctly.
+
+ERROR: No blobs found (NO_BLOBS)
+  Cause : SKU images don't exist in Azure under the expected prefix
+  Fix   : Image was never uploaded to Azure. Nothing to process.
+
+WARNING: 12 not found (after Fetch from Unbxd)
+  Cause : Those SKUs don't exist in Unbxd catalogue
+  Fix   : Normal — skip them or check if SKU ID is correct.
+
+
+--------------------------------------------------------------------------------
+SECTION 9 — ENVIRONMENT VARIABLES (.env)
+--------------------------------------------------------------------------------
+
+File location: /home/lmsone/image-resize/.env
+
+Required variables:
+
+  AZURE_ACCOUNT_NAME=
+  AZURE_ACCOUNT_KEY=
+  CLOUDINARY_CLOUD_NAME=
+  CLOUDINARY_API_KEY=
+  CLOUDINARY_API_SECRET=
+  MYSQL_HOST=
+  MYSQL_PORT=3306
+  MYSQL_DB=
+  MYSQL_USER=
+  MYSQL_PASSWORD=
+  BABYSHOP_UNBXD_API_KEY=
+  BABYSHOP_UNBXD_SITE_KEY=
+  BABYSHOP_SOURCE_PREFIX=babyshopstores/
+  BABYSHOP_TARGET_FOLDER=babyshopstores-new
+
+IMPORTANT: Never commit .env to Git. Never share credentials over chat.
+
+
+--------------------------------------------------------------------------------
+SECTION 10 — QUICK REFERENCE CHEATSHEET
+--------------------------------------------------------------------------------
+
+ACTION                        COMMAND / LOCATION
+-----------------------------+--------------------------------------------------
+SSH to server                | ssh lmsone@10.126.32.10
+Go to project                | cd image-resize/
+Start health check           | nohup python3 check-image-health.py --use-new --pages 0 --no-resume --workers 80 > image_health/run.log 2>&1 &
+Monitor health check         | tail -100f image_health/run.log
+Get broken SKUs (SQL)        | SELECT sku_id FROM sku_needs_transformation;
+Open UI                      | https://image.landmarkshops.in/?dev=1
+Reprocess SKUs               | SKU List tab → Paste → Fetch → Start
+View processed images        | https://image.landmarkshops.in/?bq=SKU_ID
+Baby Shop browse             | https://image.landmarkshops.in/BabyShop
+Restart Flask server         | pkill -f "ui/app.py" && nohup python3 ui/app.py > logs/ui.log 2>&1 &
+View UI logs                 | tail -100f logs/ui.log
+
+================================================================================
+END OF DOCUMENT
+================================================================================
