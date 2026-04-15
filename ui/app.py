@@ -372,13 +372,20 @@ def from_json_filter(val) -> list:
 
 # ── Data helpers ──────────────────────────────────────────────
 
-def _get_category_groups(cur) -> list[dict]:
+def _get_category_groups(cur, brand: str = "lifestyle") -> list[dict]:
     """
     Return L1 group pills: aggregate sku_results by the prefix before the first '-'.
     e.g. 'beauty-face' → group 'beauty'.
     Ordered by a fixed display order (defined in _GROUP_META), unknowns go last.
+    brand='lifestyle' → exclude babyshop brand rows
+    brand='babyshop'  → only babyshop brand rows
     """
-    cur.execute("""
+    if brand == "babyshop":
+        brand_clause = "AND brand = 'babyshop'"
+    else:
+        brand_clause = "AND (brand IS NULL OR brand != 'babyshop')"
+
+    cur.execute(f"""
         SELECT
             LOWER(SUBSTRING_INDEX(TRIM(COALESCE(category,'')), '-', 1)) AS grp,
             COUNT(*)                                                      AS total,
@@ -386,6 +393,7 @@ def _get_category_groups(cur) -> list[dict]:
             SUM(status = 'failed')                                        AS failed
         FROM  sku_results
         WHERE category IS NOT NULL AND category != ''
+          {brand_clause}
         GROUP BY grp
         HAVING grp != ''
         ORDER BY grp
@@ -418,6 +426,7 @@ def _get_stats(cur) -> dict:
             SUM(status = 'skipped')                     AS skipped,
             SUM(azure_uploaded)                         AS total_images
         FROM sku_results
+        WHERE (brand IS NULL OR brand != 'babyshop')
     """)
     return cur.fetchone() or {}
 
@@ -683,10 +692,24 @@ def index():
         stats            = _get_stats(cur)
         recent_runs      = _get_recent_runs(cur)
         failed_skus      = _get_failed_skus(cur)
-        category_groups  = _get_category_groups(cur)
+        category_groups    = _get_category_groups(cur, "lifestyle")
+        bs_category_groups = _get_category_groups(cur, "babyshop")
 
         business_results    = _build_business_results(cur, bq) if bq else []
         dev_sku, dev_images = _build_dev_sku(cur, dq) if dq else (None, [])
+
+        # ── Baby Shop redirect banner ─────────────────────────
+        # If bq search returns no Lifestyle results, check if it's a Baby Shop SKU
+        bs_redirect_sku = None
+        if bq and not business_results:
+            cur.execute("""
+                SELECT sku_id FROM sku_results
+                WHERE  sku_id LIKE %s AND brand = 'babyshop'
+                LIMIT  1
+            """, (f"%{bq}%",))
+            bs_row = cur.fetchone()
+            if bs_row:
+                bs_redirect_sku = bs_row["sku_id"]
     finally:
         cur.close()
         db.close()   # returns connection to pool
@@ -696,8 +719,9 @@ def index():
         stats            = stats,
         recent_runs      = recent_runs,
         failed_skus      = failed_skus,
-        category_groups  = category_groups,
-        business_results = business_results,
+        category_groups    = category_groups,
+        bs_category_groups = bs_category_groups,
+        business_results   = business_results,
         bq               = bq,
         dev_sku          = dev_sku,
         dev_images       = dev_images,
@@ -705,6 +729,7 @@ def index():
         show_reprocess   = show_reprocess,
         show_upload_all  = show_upload_all,
         upload_users     = [],            # kept for template compat — dropdown removed
+        bs_redirect_sku  = bs_redirect_sku,
     )
 
 
@@ -1208,7 +1233,8 @@ def sku_list():
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
-        category_groups = _get_category_groups(cur)
+        category_groups    = _get_category_groups(cur, "lifestyle")
+        bs_category_groups = _get_category_groups(cur, "babyshop")
 
         if not category and not group:
             # ── Level 0: Full category grid ───────────────────
@@ -1235,10 +1261,11 @@ def sku_list():
                 cat["thumb_url"] = make_cf_url(raw) or make_sas_url(raw)
             return render_template(
                 "skus.html",
-                categories      = categories,
-                category        = None,
-                group           = None,
-                category_groups = category_groups,
+                categories         = categories,
+                category           = None,
+                group              = None,
+                category_groups    = category_groups,
+                bs_category_groups = bs_category_groups,
             )
 
         if group and not category:
@@ -1270,11 +1297,12 @@ def sku_list():
                 cat["thumb_url"] = make_cf_url(raw) or make_sas_url(raw)
             return render_template(
                 "skus.html",
-                categories      = categories,
-                category        = None,
-                group           = group,
-                group_label     = group_label,
-                category_groups = category_groups,
+                categories         = categories,
+                category           = None,
+                group              = group,
+                group_label        = group_label,
+                category_groups    = category_groups,
+                bs_category_groups = bs_category_groups,
             )
 
         # ── Level 2: SKU list for selected category ───────────
@@ -1356,9 +1384,10 @@ def sku_list():
         total_pages     = total_pages,
         total           = total,
         per_page        = per_page,
-        status          = status,
-        q               = q,
-        category_groups = category_groups,
+        status             = status,
+        q                  = q,
+        category_groups    = category_groups,
+        bs_category_groups = bs_category_groups,
     )
 
 
@@ -1981,7 +2010,9 @@ def api_bulk_upload_images():
         if not fname:
             continue
 
-        if fname not in known:
+        # If image_results has no rows for this SKU yet (never processed),
+        # allow any file. Otherwise enforce filename must match a known row.
+        if known and fname not in known:
             skipped.append(fname)
             continue
 

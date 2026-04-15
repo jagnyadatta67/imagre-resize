@@ -11,10 +11,10 @@
 
 <div id="cat-filter-bar" style="background:#fff; border-radius:14px; border:1px solid #e5e7eb; padding:14px 18px; margin-bottom:22px;">
 
-  <!-- ── L1 Group pills ──────────────────────────────────────── -->
+  <!-- ── LIFESTYLE pills ─────────────────────────────────────── -->
   <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
     <span style="font-size:.7rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; margin-right:2px;">
-      Browse
+      Lifestyle
     </span>
 
     {% for grp in category_groups %}
@@ -40,6 +40,34 @@
     </button>
     {% endfor %}
   </div>
+
+  <!-- ── BABY SHOP pills ─────────────────────────────────────── -->
+  {% set _bs_groups = bs_category_groups if bs_category_groups is defined else [] %}
+  {% if _bs_groups %}
+  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid #f1f5f9;">
+    <span style="font-size:.7rem; font-weight:700; color:#f97316; text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; margin-right:2px;">
+      🛍 Baby Shop
+    </span>
+
+    {% for grp in _bs_groups %}
+    <a href="/BabyShop?category={{ grp.name }}"
+       style="display:inline-flex; align-items:center; gap:6px; padding:6px 14px; border-radius:999px;
+              border:1.5px solid #fed7aa; background:#fff7ed; color:#92400e;
+              font-size:.8rem; font-weight:600; text-decoration:none; transition:all .15s;"
+       onmouseover="this.style.background='#ffedd5';this.style.borderColor='#f97316';"
+       onmouseout="this.style.background='#fff7ed';this.style.borderColor='#fed7aa';">
+      <span>🛍</span>
+      <span>{{ grp.label }}</span>
+      <span style="display:inline-flex; align-items:center; gap:1px; padding:1px 8px; border-radius:999px;
+                   background:#fef3c7; font-size:.66rem; font-weight:700; line-height:1.6;">
+        <span style="color:#10b981;">{{ grp.passed | int }}</span>
+        <span style="color:#94a3b8; margin:0 1px;">/</span>
+        <span style="color:#64748b;">{{ grp.total | int }}</span>
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <!-- ── L2 Subcategory panel (appears on L1 click) ──────────── -->
   <div id="l2-panel" style="display:{% if _active %}block{% else %}none{% endif %};

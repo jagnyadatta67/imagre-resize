@@ -129,7 +129,11 @@ def _fetch_single(sku_id: str, session: requests.Session, search_url: str = None
         # Extract EXACT blob paths from gallery URLs — do NOT use SKU prefix listing
         # e.g. https://media-uk.landmarkshops.in/lifestyle/1000008664304-1000008664303_01-2100.jpg
         #   →  lifestyle/1000008664304-1000008664303_01-2100.jpg
-        blobs = [urlparse(u).path.lstrip("/") for u in gallery if u]
+        # Note: Unbxd may return lifestyle-new/ (processed CDN path) — map back to lifestyle/ (source)
+        blobs = [
+            urlparse(u).path.lstrip("/").replace("lifestyle-new/", "lifestyle/")
+            for u in gallery if u
+        ]
 
         # L2 category = entry with exactly 2 hyphen-separated parts
         all_cats = product.get("allCategories") or []
