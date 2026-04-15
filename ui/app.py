@@ -2195,7 +2195,7 @@ def api_upload_sku_images():
     db  = get_db()
     cur = db.cursor(dictionary=True)
     try:
-        cur.execute("SELECT container_name FROM sku_results WHERE sku_id = %s", (sku_id,))
+        cur.execute("SELECT container_name, brand FROM sku_results WHERE sku_id = %s", (sku_id,))
         row = cur.fetchone()
     finally:
         cur.close()
@@ -2204,7 +2204,9 @@ def api_upload_sku_images():
     if not row or not row.get("container_name"):
         return jsonify({"ok": False, "error": f"No DB record for SKU '{sku_id}'"}), 404
 
-    container_name = row["container_name"]
+    container_name  = row["container_name"]
+    _sku_brand      = (row.get("brand") or "").strip().lower()
+    _sku_target     = BABYSHOP_TARGET_FOLDER if _sku_brand == "babyshop" else None
 
     # Compute next reprocess_count once — shared across all files in this batch
     db2  = get_db()
@@ -2230,7 +2232,7 @@ def api_upload_sku_images():
 
         try:
             image_bytes = file.read()
-            azure_url   = _azure.upload_to_newc(filename, image_bytes, container_name)
+            azure_url   = _azure.upload_to_newc(filename, image_bytes, container_name, target_folder=_sku_target)
 
             db3  = get_db()
             cur3 = db3.cursor(dictionary=True)

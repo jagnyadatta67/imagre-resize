@@ -21,12 +21,14 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 from typing import Optional
 
 import requests as _req
 from requests.adapters import HTTPAdapter
 import cloudinary
 import cloudinary.uploader
+import cloudinary.exceptions
 
 from config import (
     TARGET_W, TARGET_H,
@@ -184,25 +186,78 @@ def _cloudinary_upload_and_fetch(
     """
     Upload BytesIO to Cloudinary → fetch the transformed result into memory.
     Returns (output_bytes, True, cloudinary_url).
+
+    Retries up to 3 times on transient network errors (ConnectionError, Timeout, 429).
+    Does NOT retry on auth errors or bad image/param errors.
     """
     public_id = filename.rsplit(".", 1)[0]   # strip extension
 
-    result = cloudinary.uploader.upload(
-        io.BytesIO(image_bytes),
-        folder          = sku_id,
-        public_id       = public_id,
-        overwrite       = True,
-        unique_filename = False,
-        transformation  = transformation,
+    # Errors that are safe to retry (transient network issues)
+    _RETRYABLE = (
+        ConnectionError,
+        _req.exceptions.ConnectionError,
+        _req.exceptions.Timeout,
+        _req.exceptions.ChunkedEncodingError,
     )
-    cloudinary_url = result["secure_url"]
-    logger.info(f"[{filename}] Cloudinary URL: {cloudinary_url}")
+    MAX_RETRIES  = 3
+    RETRY_DELAYS = [2, 4, 8]   # seconds between retries
 
-    # Fetch transformed result into memory (no disk write)
-    resp = _http.get(cloudinary_url, timeout=30)
-    resp.raise_for_status()
+    last_exc: Exception = RuntimeError("Unknown error")
 
-    return resp.content, True, cloudinary_url
+    for attempt in range(MAX_RETRIES + 1):  # 0,1,2,3 → 4 total attempts
+        try:
+            result = cloudinary.uploader.upload(
+                io.BytesIO(image_bytes),
+                folder          = sku_id,
+                public_id       = public_id,
+                overwrite       = True,
+                unique_filename = False,
+                transformation  = transformation,
+            )
+            cloudinary_url = result["secure_url"]
+            if attempt > 0:
+                logger.info(f"[{filename}] Cloudinary succeeded on attempt {attempt + 1}")
+            else:
+                logger.info(f"[{filename}] Cloudinary URL: {cloudinary_url}")
+
+            # Fetch transformed result into memory (no disk write)
+            resp = _http.get(cloudinary_url, timeout=30)
+            resp.raise_for_status()
+
+            return resp.content, True, cloudinary_url
+
+        except cloudinary.exceptions.AuthorizationRequired:
+            # Wrong credentials — retrying won't help, fail immediately
+            raise
+
+        except cloudinary.exceptions.Error as exc:
+            # HTTP 429 rate limit → retry with longer wait
+            if "429" in str(exc) or "rate limit" in str(exc).lower():
+                wait = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)] * 2
+                logger.warning(f"[{filename}] Cloudinary rate limit (429) — waiting {wait}s before retry {attempt + 1}/{MAX_RETRIES}")
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    time.sleep(wait)
+                    continue
+            # Other Cloudinary errors (bad params, invalid image) — don't retry
+            raise
+
+        except _RETRYABLE as exc:
+            last_exc = exc
+            if attempt < MAX_RETRIES:
+                wait = RETRY_DELAYS[attempt]
+                logger.warning(
+                    f"[{filename}] Cloudinary transient error (attempt {attempt + 1}/{MAX_RETRIES + 1}): "
+                    f"{type(exc).__name__}: {exc} — retrying in {wait}s"
+                )
+                time.sleep(wait)
+            else:
+                logger.error(
+                    f"[{filename}] Cloudinary failed after {MAX_RETRIES + 1} attempts: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+
+    raise last_exc
 
 
 # ============================================================
