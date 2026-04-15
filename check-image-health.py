@@ -374,6 +374,10 @@ def main() -> None:
     # Ensure DB tables exist (safe to run every time — all CREATE IF NOT EXISTS)
     pipeline_db.init_db()
 
+    # Truncate health tables so every run reflects fresh CDN state
+    log.info("Truncating broken_image_health and sku_needs_transformation for fresh run...")
+    pipeline_db.truncate_health_tables()
+
     log.info("=" * 60)
     log.info("check-image-health  (Unbxd → CDN HEAD check)")
     log.info(f"  Workers    : {args.workers}")

@@ -699,6 +699,22 @@ def update_reprocess_transform(
 # BROKEN IMAGE HEALTH HELPERS
 # ============================================================
 
+def truncate_health_tables() -> None:
+    """
+    Truncate broken_image_health and sku_needs_transformation tables.
+    Called at the start of each health-check run so results always
+    reflect the current state of images (no stale rows from prior runs).
+    """
+    conn = _conn()
+    cur  = conn.cursor()
+    cur.execute("TRUNCATE TABLE broken_image_health")
+    cur.execute("TRUNCATE TABLE sku_needs_transformation")
+    conn.commit()
+    cur.close()
+    conn.close()
+    log.info("Truncated broken_image_health and sku_needs_transformation — fresh run.")
+
+
 def upsert_broken_images(rows: list[dict]) -> int:
     """
     Bulk-upsert broken image rows into broken_image_health.
