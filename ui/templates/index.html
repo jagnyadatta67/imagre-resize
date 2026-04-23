@@ -1030,7 +1030,7 @@ FAILED_SKU_ID,,true</pre>
     <div style="margin-bottom:20px;">
       <h2 style="font-size:1.05rem; font-weight:700; color:#1e293b; margin:0;">📤 Process by SKU List</h2>
       <p style="font-size:.8rem; color:#94a3b8; margin:4px 0 0;">
-        Paste SKU IDs → fetch from Unbxd → auto-detect container &amp; pad mode → process
+        Paste SKU IDs → fetch from Unbxd (or search Azure directly) → auto-detect container &amp; pad mode → process
       </p>
     </div>
 
@@ -1069,6 +1069,47 @@ FAILED_SKU_ID,,true</pre>
       <div style="margin-top:8px; font-size:.75rem; color:#94a3b8;" id="sp-count">0 SKU IDs</div>
     </div>
 
+    <!-- Skip Unbxd toggle -->
+    <div style="margin-bottom:16px; display:flex; flex-direction:column; gap:10px;">
+      <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer;
+                     background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;
+                     padding:8px 14px; font-size:.82rem; font-weight:600; color:#374151;
+                     user-select:none; width:fit-content;">
+        <input type="checkbox" id="sp-skip-unbxd" onchange="toggleSpAzureMode()"
+               style="width:15px; height:15px; cursor:pointer; accent-color:#6366f1;"/>
+        ☁️ Skip Unbxd — search Azure directly
+      </label>
+
+      <!-- Azure options panel (shown when skip-unbxd is checked) -->
+      <div id="sp-azure-options"
+           style="display:none; background:#f0f9ff; border:1px solid #bae6fd; border-radius:10px;
+                  padding:14px 16px; gap:20px; flex-wrap:wrap; align-items:center;">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label style="font-size:.75rem; font-weight:700; color:#0369a1;">Source Container</label>
+          <select id="sp-azure-container"
+                  style="border:1px solid #bae6fd; border-radius:7px; padding:6px 10px;
+                         font-size:.83rem; background:#fff; outline:none; cursor:pointer;">
+            <option value="in-media">in-media</option>
+            <option value="in-media-ea">in-media-ea</option>
+            <option value="in-media-us">in-media-us</option>
+            <option value="in-media-uk">in-media-uk</option>
+          </select>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label style="font-size:.75rem; font-weight:700; color:#0369a1;">Pad Mode</label>
+          <select id="sp-azure-padmode"
+                  style="border:1px solid #bae6fd; border-radius:7px; padding:6px 10px;
+                         font-size:.83rem; background:#fff; outline:none; cursor:pointer;">
+            <option value="auto">auto (pad with background)</option>
+            <option value="no">no (crop:fill)</option>
+          </select>
+        </div>
+        <div style="font-size:.75rem; color:#0369a1; align-self:flex-end; padding-bottom:6px;">
+          Category will be set to <strong>missing-category</strong>
+        </div>
+      </div>
+    </div>
+
     <!-- Step 2: Fetch button -->
     <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
       <button id="sp-fetch-btn" onclick="fetchSpSkus()"
@@ -1092,6 +1133,18 @@ FAILED_SKU_ID,,true</pre>
             <input id="sp-workers" type="number" min="1" max="50" value="10"
                    style="width:60px; border:1px solid #e2e8f0; border-radius:7px; padding:5px 8px; font-size:.82rem; outline:none;"
                    onfocus="this.style.borderColor='#6366f1'" onblur="this.style.borderColor='#e2e8f0'"/>
+          </div>
+          <!-- Override Pad Mode -->
+          <div style="display:flex; align-items:center; gap:6px;">
+            <label style="font-size:.78rem; font-weight:600; color:#374151;">Override Pad Mode</label>
+            <select id="sp-pad-override" onchange="spOverridePadMode()"
+                    style="border:1px solid #e2e8f0; border-radius:7px; padding:5px 10px;
+                           font-size:.8rem; background:#fff; outline:none; cursor:pointer;">
+              <option value="">— keep per SKU —</option>
+              <option value="auto">auto (pad with background)</option>
+              <option value="no">no (smart crop fill)</option>
+              <option value="center">centre crop (always from centre)</option>
+            </select>
           </div>
           <!-- Force Retry toggle -->
           <label style="display:flex; align-items:center; gap:6px; cursor:pointer;
@@ -1136,7 +1189,7 @@ FAILED_SKU_ID,,true</pre>
 
       <!-- Not found list -->
       <div id="sp-notfound-panel" style="display:none;">
-        <div style="font-size:.8rem; font-weight:700; color:#b91c1c; margin-bottom:8px;">
+        <div id="sp-notfound-label" style="font-size:.8rem; font-weight:700; color:#b91c1c; margin-bottom:8px;">
           ⚠️ Not found in Unbxd (will be skipped):
         </div>
         <div id="sp-notfound-list"
@@ -1249,9 +1302,17 @@ FAILED_SKU_ID,,true</pre>
         </div>
 
         <!-- Start -->
-        <div style="margin-top:16px;display:flex;gap:12px;align-items:center;">
+        <div style="margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
           <label style="font-size:.82rem;color:#64748b;">Workers:</label>
           <input id="bs-workers" type="number" value="10" min="1" max="50" style="width:70px;padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:.85rem;">
+          <label style="font-size:.82rem;color:#64748b;margin-left:6px;">Override Pad Mode:</label>
+          <select id="bs-pad-override" onchange="bsOverridePadMode()"
+                  style="border:1px solid #e2e8f0;border-radius:7px;padding:5px 10px;font-size:.83rem;background:#fff;outline:none;cursor:pointer;">
+            <option value="">— keep per SKU —</option>
+            <option value="auto">auto (pad with background)</option>
+            <option value="no">no (smart crop fill)</option>
+            <option value="center">centre crop (always from centre)</option>
+          </select>
           <button id="bs-start-btn" onclick="bsStartProcessing()"
             style="padding:9px 24px;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:.9rem;">
             ▶ Start Processing
@@ -2984,6 +3045,7 @@ function undoQc(idx, skuId) {
 
 let _spFetchedSkus   = [];   // [{sku_id, category, container, image_count, pad_mode}]
 let _spPollTimer     = null;
+let _spAzureMode     = false;
 
 function initSkuProcess() {
   // nothing to load eagerly — wait for user input
@@ -3015,7 +3077,24 @@ function loadSpFile(input) {
   input.value = '';   // reset so same file can be re-uploaded
 }
 
+function toggleSpAzureMode() {
+  const checked = document.getElementById('sp-skip-unbxd').checked;
+  const azureOpts = document.getElementById('sp-azure-options');
+  azureOpts.style.display = checked ? 'flex' : 'none';
+  document.getElementById('sp-fetch-btn').textContent = checked
+    ? '☁️ Fetch from Azure'
+    : '🔍 Fetch from Unbxd';
+  // Reset preview when mode switches
+  document.getElementById('sp-preview-panel').style.display = 'none';
+  _spFetchedSkus = [];
+}
+
 function fetchSpSkus() {
+  if (document.getElementById('sp-skip-unbxd').checked) {
+    fetchSpSkusAzure();
+    return;
+  }
+
   const lines = document.getElementById('sp-textarea').value
     .split('\n').map(l => l.trim()).filter(Boolean);
 
@@ -3044,31 +3123,12 @@ function fetchSpSkus() {
 
     status.textContent = `✅ ${_spFetchedSkus.length} found, ⚠️ ${notFound.length} not found`;
 
-    // Build preview table
-    const tbody = document.getElementById('sp-preview-tbody');
-    tbody.innerHTML = _spFetchedSkus.map((s, i) => {
-      const padBadge = s.pad_mode === 'no'
-        ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;">no</span>`
-        : `<span style="background:#f3e8ff;color:#7c3aed;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;">auto</span>`;
-      return `<tr>
-        <td style="color:#94a3b8;font-size:.78rem;">${i+1}</td>
-        <td class="mono" style="font-size:.8rem;font-weight:600;">${s.sku_id}</td>
-        <td><span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:600;">${s.category}</span></td>
-        <td style="font-size:.8rem;color:#64748b;">${s.container}</td>
-        <td style="text-align:center;font-size:.8rem;">${s.image_count}</td>
-        <td style="text-align:center;">${padBadge}</td>
-      </tr>`;
-    }).join('');
-
-    // Summary
-    const noCount   = _spFetchedSkus.filter(s => s.pad_mode === 'no').length;
-    const autoCount = _spFetchedSkus.filter(s => s.pad_mode === 'auto').length;
-    document.getElementById('sp-preview-summary').innerHTML = `
-      <span style="background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">no: ${noCount}</span>
-      <span style="background:#f3e8ff;color:#7c3aed;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">auto: ${autoCount}</span>
-      <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_spFetchedSkus.length}</span>`;
+    _spAzureMode = false;
+    document.getElementById('sp-pad-override').value = '';
+    _spRenderPreviewTable();
 
     // Not found panel
+    document.getElementById('sp-notfound-label').textContent = '⚠️ Not found in Unbxd (will be skipped):';
     const nfPanel = document.getElementById('sp-notfound-panel');
     if (notFound.length) {
       document.getElementById('sp-notfound-list').textContent =
@@ -3085,6 +3145,104 @@ function fetchSpSkus() {
     btn.disabled    = false;
     btn.textContent = '🔍 Fetch from Unbxd';
   });
+}
+
+function fetchSpSkusAzure() {
+  const lines = document.getElementById('sp-textarea').value
+    .split('\n').map(l => l.trim()).filter(Boolean);
+
+  if (!lines.length) { alert('Please paste some SKU IDs first.'); return; }
+  if (lines.length > 1000) { alert('Max 1000 SKUs per batch.'); return; }
+
+  const container = document.getElementById('sp-azure-container').value;
+  const padMode   = document.getElementById('sp-azure-padmode').value;
+  const btn       = document.getElementById('sp-fetch-btn');
+  const status    = document.getElementById('sp-fetch-status');
+
+  btn.disabled       = true;
+  btn.textContent    = '⏳ Searching Azure…';
+  status.textContent = `Searching ${container} for ${lines.length} SKUs…`;
+  document.getElementById('sp-preview-panel').style.display = 'none';
+
+  fetch('/api/process-skuids/fetch-azure', {
+    method:  'POST',
+    headers: {'Content-Type': 'application/json'},
+    body:    JSON.stringify({sku_ids: lines, container, pad_mode: padMode}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { alert('Error: ' + data.error); return; }
+
+    _spFetchedSkus = data.found || [];
+    const notFound = data.not_found || [];
+
+    status.textContent = `✅ ${_spFetchedSkus.length} found in Azure, ⚠️ ${notFound.length} not found`;
+
+    _spAzureMode = true;
+    document.getElementById('sp-pad-override').value = '';
+    _spRenderPreviewTable();
+
+    // Not found panel
+    document.getElementById('sp-notfound-label').textContent = '⚠️ Not found in Azure (will be skipped):';
+    const nfPanel = document.getElementById('sp-notfound-panel');
+    if (notFound.length) {
+      document.getElementById('sp-notfound-list').textContent =
+        notFound.map(n => `${n.sku_id}  (${n.reason || 'no blobs found'})`).join('\n');
+      nfPanel.style.display = 'block';
+    } else {
+      nfPanel.style.display = 'none';
+    }
+
+    document.getElementById('sp-preview-panel').style.display = 'block';
+  })
+  .catch(err => { alert('Network error: ' + err); })
+  .finally(() => {
+    btn.disabled    = false;
+    btn.textContent = '☁️ Fetch from Azure';
+  });
+}
+
+function _spRenderPreviewTable() {
+  const tbody = document.getElementById('sp-preview-tbody');
+  tbody.innerHTML = _spFetchedSkus.map((s, i) => {
+    const isAzure  = s.category === 'missing-category';
+    const catBadge = isAzure
+      ? `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:600;">${s.category}</span>`
+      : `<span style="background:#fef3c7;color:#92400e;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:600;">${s.category}</span>`;
+    const padBadge = s.pad_mode === 'no'
+      ? `<span style="background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;">no</span>`
+      : `<span style="background:#f3e8ff;color:#7c3aed;padding:2px 8px;border-radius:9999px;font-size:.72rem;font-weight:700;">auto</span>`;
+    return `<tr>
+      <td style="color:#94a3b8;font-size:.78rem;">${i+1}</td>
+      <td class="mono" style="font-size:.8rem;font-weight:600;">${s.sku_id}</td>
+      <td>${catBadge}</td>
+      <td style="font-size:.8rem;color:#64748b;">${s.container}</td>
+      <td style="text-align:center;font-size:.8rem;">${s.image_count}</td>
+      <td style="text-align:center;">${padBadge}</td>
+    </tr>`;
+  }).join('');
+
+  const noCount   = _spFetchedSkus.filter(s => s.pad_mode === 'no').length;
+  const autoCount = _spFetchedSkus.filter(s => s.pad_mode === 'auto').length;
+  if (_spAzureMode) {
+    const cont = _spFetchedSkus[0]?.container || '';
+    document.getElementById('sp-preview-summary').innerHTML = `
+      <span style="background:#e0f2fe;color:#0369a1;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">☁️ ${cont}</span>
+      <span style="background:#fee2e2;color:#991b1b;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">missing-category</span>
+      <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_spFetchedSkus.length}</span>`;
+  } else {
+    document.getElementById('sp-preview-summary').innerHTML = `
+      <span style="background:#dbeafe;color:#1e40af;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">no: ${noCount}</span>
+      <span style="background:#f3e8ff;color:#7c3aed;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">auto: ${autoCount}</span>
+      <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_spFetchedSkus.length}</span>`;
+  }
+}
+
+function spOverridePadMode() {
+  const val = document.getElementById('sp-pad-override').value;
+  if (!val) return;
+  _spFetchedSkus.forEach(s => s.pad_mode = val);
+  _spRenderPreviewTable();
 }
 
 function startSpProcessing() {
@@ -3332,27 +3490,8 @@ function bsFetchSkus() {
     const notFound = data.not_found || [];
     stat.textContent = `✅ ${_bsFetchedSkus.length} found, ⚠️ ${notFound.length} not found`;
 
-    const tbody = document.getElementById('bs-preview-tbody');
-    tbody.innerHTML = _bsFetchedSkus.map((s, i) => `
-      <tr style="border-bottom:1px solid #f1f5f9;">
-        <td style="padding:6px 10px;color:#94a3b8;">${i+1}</td>
-        <td style="padding:6px 10px;font-family:monospace;font-size:.82rem;">${s.sku_id}</td>
-        <td style="padding:6px 10px;font-size:.82rem;">${s.category || '—'}</td>
-        <td style="padding:6px 10px;font-size:.82rem;">${s.container || '—'}</td>
-        <td style="padding:6px 10px;text-align:center;">${s.image_count || 0}</td>
-        <td style="padding:6px 10px;text-align:center;">
-          <span style="padding:2px 8px;border-radius:9999px;font-size:.75rem;font-weight:700;
-            background:${s.pad_mode==='no'?'#fef9c3':'#dcfce7'};
-            color:${s.pad_mode==='no'?'#854d0e':'#166534'};">${s.pad_mode}</span>
-        </td>
-      </tr>`).join('');
-
-    const noCount   = _bsFetchedSkus.filter(s => s.pad_mode === 'no').length;
-    const autoCount = _bsFetchedSkus.filter(s => s.pad_mode === 'auto').length;
-    document.getElementById('bs-pad-summary').innerHTML =
-      `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">auto: ${autoCount}</span>
-       <span style="background:#fef9c3;color:#854d0e;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">no-pad: ${noCount}</span>
-       <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_bsFetchedSkus.length}</span>`;
+    document.getElementById('bs-pad-override').value = '';
+    _bsRenderPreviewTable();
 
     const nfPanel = document.getElementById('bs-notfound-panel');
     if (notFound.length) {
@@ -3370,6 +3509,37 @@ function bsFetchSkus() {
     btn.disabled    = false;
     btn.textContent = '🔍 Fetch from Babyshop Unbxd';
   });
+}
+
+function _bsRenderPreviewTable() {
+  const tbody = document.getElementById('bs-preview-tbody');
+  tbody.innerHTML = _bsFetchedSkus.map((s, i) => `
+    <tr style="border-bottom:1px solid #f1f5f9;">
+      <td style="padding:6px 10px;color:#94a3b8;">${i+1}</td>
+      <td style="padding:6px 10px;font-family:monospace;font-size:.82rem;">${s.sku_id}</td>
+      <td style="padding:6px 10px;font-size:.82rem;">${s.category || '—'}</td>
+      <td style="padding:6px 10px;font-size:.82rem;">${s.container || '—'}</td>
+      <td style="padding:6px 10px;text-align:center;">${s.image_count || 0}</td>
+      <td style="padding:6px 10px;text-align:center;">
+        <span style="padding:2px 8px;border-radius:9999px;font-size:.75rem;font-weight:700;
+          background:${s.pad_mode==='no'?'#fef9c3':'#dcfce7'};
+          color:${s.pad_mode==='no'?'#854d0e':'#166534'};">${s.pad_mode}</span>
+      </td>
+    </tr>`).join('');
+
+  const noCount   = _bsFetchedSkus.filter(s => s.pad_mode === 'no').length;
+  const autoCount = _bsFetchedSkus.filter(s => s.pad_mode === 'auto').length;
+  document.getElementById('bs-pad-summary').innerHTML =
+    `<span style="background:#dcfce7;color:#166534;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">auto: ${autoCount}</span>
+     <span style="background:#fef9c3;color:#854d0e;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">no-pad: ${noCount}</span>
+     <span style="background:#f1f5f9;color:#475569;padding:3px 10px;border-radius:9999px;font-size:.75rem;font-weight:600;">total: ${_bsFetchedSkus.length}</span>`;
+}
+
+function bsOverridePadMode() {
+  const val = document.getElementById('bs-pad-override').value;
+  if (!val) return;
+  _bsFetchedSkus.forEach(s => s.pad_mode = val);
+  _bsRenderPreviewTable();
 }
 
 function bsStartProcessing() {

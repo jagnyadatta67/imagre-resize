@@ -757,6 +757,60 @@ def api_process_skuids_fetch():
     return jsonify(result)
 
 
+@app.route("/api/process-skuids/fetch-azure", methods=["POST"])
+def api_process_skuids_fetch_azure():
+    """
+    Fetch SKU blobs directly from Azure (skip Unbxd lookup).
+    Body: {sku_ids: ["id1", ...], container: "in-media", pad_mode: "auto"}
+    Returns: {found: [...], not_found: [...]}
+    """
+    if not _current_user():
+        return jsonify({"error": "Login required"}), 401
+
+    data      = request.get_json() or {}
+    raw_ids   = data.get("sku_ids") or []
+    container = (data.get("container") or "").strip()
+    pad_mode  = data.get("pad_mode", "auto")
+
+    sku_ids = [s.strip() for s in raw_ids if str(s).strip()]
+    if not sku_ids:
+        return jsonify({"error": "No SKU IDs provided"}), 400
+    if len(sku_ids) > 1000:
+        return jsonify({"error": "Max 1000 SKUs per batch"}), 400
+    if not container:
+        return jsonify({"error": "Container is required"}), 400
+
+    def _check_sku(sku_id):
+        try:
+            blobs = _azure.list_sku_blobs(container, sku_id)
+            if blobs:
+                return {
+                    "sku_id":       sku_id,
+                    "found":        True,
+                    "category":     "missing-category",
+                    "container":    container,
+                    "pad_mode":     pad_mode,
+                    "image_count":  len(blobs),
+                    "source_blobs": blobs,
+                }
+            return {"sku_id": sku_id, "found": False, "reason": "no_blobs_in_azure"}
+        except Exception as exc:
+            return {"sku_id": sku_id, "found": False, "reason": str(exc)[:200]}
+
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        results = [f.result() for f in as_completed(
+            pool.submit(_check_sku, sid) for sid in sku_ids
+        )]
+
+    found     = [r for r in results if r.get("found")]
+    not_found = [r for r in results if not r.get("found")]
+
+    order = {sid: i for i, sid in enumerate(sku_ids)}
+    found.sort(key=lambda r: order.get(r["sku_id"], 9999))
+
+    return jsonify({"found": found, "not_found": not_found})
+
+
 @app.route("/api/process-skuids/start", methods=["POST"])
 def api_process_skuids_start():
     """
